@@ -56,8 +56,8 @@ allowed_hosts = ["your-machine.your-tailnet.ts.net", "your-machine.your-tailnet.
 ```
 
 ```bash
-systemctl --user restart bon5ai-remote
-bon5ai-remote doctor
+systemctl --user restart tmux-remote-viewer
+tmux-remote-viewer doctor
 ```
 
 With `proxy_header` set and no secret available, the gate refuses to start. It never
@@ -77,7 +77,7 @@ curl -s https://term.example.com/.well-known/oauth-authorization-server | head -
 ```
 
 If a page answers `421 Misdirected request`, look for the gate's `refused Host '...'`
-log line (`journalctl --user -u bon5ai-remote`) and add that value to `allowed_hosts`.
+log line (`journalctl --user -u tmux-remote-viewer`) and add that value to `allowed_hosts`.
 
 ## Why the cache policy looks odd
 

@@ -1,11 +1,11 @@
-"""bon5ai-remote: share a tmux session with browsers (read-only) and with paired agents (MCP).
+"""tmux-remote-viewer: share a tmux session with browsers (read-only) and with paired agents (MCP).
 
-    bon5ai-remote share              start or rejoin the shared session (prints a QR code the first time)
-    bon5ai-remote code               mint another viewer pairing code
-    bon5ai-remote agent approve      approve an agent that is signing in, choosing its scope and pane
-    bon5ai-remote agent list         list agent grants;   agent revoke <id> | --all
-    bon5ai-remote serve              run the gate (normally from the service)
-    bon5ai-remote doctor             check the installation
+    tmux-remote-viewer share              start or rejoin the shared session (prints a QR code the first time)
+    tmux-remote-viewer code               mint another viewer pairing code
+    tmux-remote-viewer agent approve      approve an agent that is signing in, choosing its scope and pane
+    tmux-remote-viewer agent list         list agent grants;   agent revoke <id> | --all
+    tmux-remote-viewer serve              run the gate (normally from the service)
+    tmux-remote-viewer doctor             check the installation
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from .tmux import Tmux
 
 MIN_TMUX = (3, 2)
 MIN_ASCIINEMA = (3, 0)
-SERVICE = "bon5ai-remote"
+SERVICE = "tmux-remote-viewer"
 LAUNCHD_LABEL = "ai.bon5.remote-viewer"
 DURATION = re.compile(r"(\d+)\s*([smhd]?)")
 
@@ -73,8 +73,8 @@ def admin(cfg: Config, method: str, route: str, payload: dict | None = None) -> 
     try:
         status, body = call(cfg.admin_socket, method, route, payload)
     except GateNotRunning:
-        raise Exit("The gate isn't running. Start it with `systemctl --user start bon5ai-remote` "
-                   "(after `bon5ai-remote install-service`) or run `bon5ai-remote serve`.") from None
+        raise Exit("The gate isn't running. Start it with `systemctl --user start tmux-remote-viewer` "
+                   "(after `tmux-remote-viewer install-service`) or run `tmux-remote-viewer serve`.") from None
     if status >= 400:
         raise Exit(body.get("error") or f"the gate answered {status}")
     return body
@@ -175,7 +175,7 @@ def ensure_stream(cfg: Config, tmux: Tmux) -> None:
         if stream_up((host, int(port))):
             return
         time.sleep(0.1)
-    print(f"bon5ai-remote: the viewer stream did not start; see {log_path}", file=sys.stderr)
+    print(f"tmux-remote-viewer: the viewer stream did not start; see {log_path}", file=sys.stderr)
 
 
 def cmd_share(cfg: Config, args) -> int:
@@ -185,7 +185,7 @@ def cmd_share(cfg: Config, args) -> int:
         raise Exit("share needs an interactive terminal.")
     for tool in ("tmux", "asciinema"):
         if not shutil.which(tool):
-            raise Exit(f"{tool} is not installed. Run `bon5ai-remote doctor` for details.")
+            raise Exit(f"{tool} is not installed. Run `tmux-remote-viewer doctor` for details.")
     ensure_private_dir(cfg.tmux_socket.parent)
     tmux = Tmux(cfg.tmux_socket, cfg.session)
     created = False
@@ -201,12 +201,12 @@ def cmd_share(cfg: Config, args) -> int:
         try:
             body = admin(cfg, "POST", "/pair")
         except Exit as error:
-            print(f"bon5ai-remote: no pairing code: {error}", file=sys.stderr)
+            print(f"tmux-remote-viewer: no pairing code: {error}", file=sys.stderr)
         else:
             print_code(cfg, body["code"], body["ttl"])
             tty_input("Press Enter to open the shared session. ")
     if os.environ.get("TMUX"):
-        print("bon5ai-remote: opening the shared session inside your tmux; its prefix key goes to the outer one.",
+        print("tmux-remote-viewer: opening the shared session inside your tmux; its prefix key goes to the outer one.",
               file=sys.stderr)
     env = {key: value for key, value in os.environ.items() if key != "TMUX"}
     os.execvpe("tmux", ["tmux", "-S", str(cfg.tmux_socket), "attach-session", "-t", f"={cfg.session}"], env)
@@ -215,7 +215,7 @@ def cmd_share(cfg: Config, args) -> int:
 
 def cmd_code(cfg: Config, args) -> int:
     if inside_share(cfg):
-        print("bon5ai-remote: viewers of this session (and agents reading it) will see this code.",
+        print("tmux-remote-viewer: viewers of this session (and agents reading it) will see this code.",
               file=sys.stderr)
     body = admin(cfg, "POST", "/pair")
     print_code(cfg, body["code"], body["ttl"])
@@ -297,7 +297,7 @@ def cmd_agent_approve(cfg: Config, args) -> int:
             return 1
     grant = admin(cfg, "POST", "/agent/approve", {"id": item["id"], "scope": scope, "pane": pane, "ttl": ttl})["grant"]
     print(f"Approved: grant {grant['id']}. The agent's browser page finishes the sign-in now.")
-    print(f"Revoke it with `bon5ai-remote agent revoke {grant['id']}`"
+    print(f"Revoke it with `tmux-remote-viewer agent revoke {grant['id']}`"
           + (f", or every agent with prefix + {cfg.kill_key} in the session." if cfg.kill_key else "."))
     return 0
 
@@ -321,7 +321,7 @@ def cmd_agent_list(cfg: Config, args) -> int:
 
 def cmd_agent_revoke(cfg: Config, args) -> int:
     if not args.all and not args.id:
-        raise Exit("Name a grant (see `bon5ai-remote agent list`) or pass --all.")
+        raise Exit("Name a grant (see `tmux-remote-viewer agent list`) or pass --all.")
     payload = {"all": True, "viewers": args.viewers} if args.all else {"id": args.id}
     revoked = admin(cfg, "POST", "/agent/revoke", payload)["revoked"]
     if not args.quiet:
@@ -358,7 +358,7 @@ def cmd_agent_token(cfg: Config, args) -> int:
     print("It stops working when it expires, when the session ends, or when the gate restarts.\n")
     print("Add it to Claude Code without the token appearing anywhere:\n")
     config = {"type": "http", "url": body["url"], "headersHelper": helper}
-    print(f"  claude mcp add-json bon5ai-remote {shlex.quote(json.dumps(config))}\n")
+    print(f"  claude mcp add-json tmux-remote-viewer {shlex.quote(json.dumps(config))}\n")
     return 0
 
 
@@ -412,8 +412,8 @@ def cmd_doctor(cfg: Config, args) -> int:
     try:
         status = admin(cfg, "GET", "/status")
         check(True, "the gate is running")
-        check(status["running"] or None, f"tmux session '{cfg.session}' "
-                                         + ("is running" if status["running"] else "is not running (bon5ai-remote share)"))
+        running = "is running" if status["running"] else "is not running (tmux-remote-viewer share)"
+        check(status["running"] or None, f"tmux session '{cfg.session}' {running}")
         if status["running"]:
             check(status["stream"] or None, "the viewer stream is " + ("up" if status["stream"] else "down"))
     except Exit as error:
@@ -516,10 +516,10 @@ def cmd_install_service(cfg: Config, args) -> int:
 
 # ---- argument parsing -------------------------------------------------------------------------
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="bon5ai-remote", description="Share a tmux session read-only with "
+    root = argparse.ArgumentParser(prog="tmux-remote-viewer", description="Share a tmux session read-only with "
                                    "browsers, and with paired agents over MCP.")
     root.add_argument("--config", help=f"config file (default: {config_dir() / 'config.toml'}; or ${CONFIG_ENV})")
-    root.add_argument("--version", action="version", version=f"bon5ai-remote {__version__}")
+    root.add_argument("--version", action="version", version=f"tmux-remote-viewer {__version__}")
     sub = root.add_subparsers(dest="command", required=True, metavar="command")
 
     share = sub.add_parser("share", help="start or rejoin the shared tmux session")
@@ -579,9 +579,9 @@ def main(argv: list[str] | None = None) -> None:
         cfg = load(args.config)
         sys.exit(args.run(cfg, args))
     except ConfigError as error:
-        sys.exit(f"bon5ai-remote: config: {error}")
+        sys.exit(f"tmux-remote-viewer: config: {error}")
     except Exit as error:
-        print(f"bon5ai-remote: {error}", file=sys.stderr)
+        print(f"tmux-remote-viewer: {error}", file=sys.stderr)
         sys.exit(error.code)
     except KeyboardInterrupt:
         sys.exit(130)

@@ -1,4 +1,4 @@
-"""`bon5ai-remote serve`: the gate process. One admin socket, one or more listeners."""
+"""`tmux-remote-viewer serve`: the gate process. One admin socket, one or more listeners."""
 
 from __future__ import annotations
 

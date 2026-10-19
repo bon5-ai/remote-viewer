@@ -109,7 +109,7 @@ def fetch(url: str, *, resolve=socket.getaddrinfo, context: ssl.SSLContext | Non
     watchdog.daemon = True
     watchdog.start()
     try:
-        conn.request("GET", target, headers={"Accept": "application/json", "User-Agent": "bon5ai-remote"})
+        conn.request("GET", target, headers={"Accept": "application/json", "User-Agent": "tmux-remote-viewer"})
         response = conn.getresponse()
         if response.status != 200:
             raise MetadataError(f"client metadata answered {response.status}")

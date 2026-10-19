@@ -9,7 +9,7 @@ const POLL_MS = 5000;
 // Shown over the empty view when there is nothing live to watch. A detached host
 // ("host-away") needs no notice: its session is still running and streaming.
 const NOTICES = {
-  'stream-down': "Stream offline. It comes back when `bon5ai-remote share` runs again.",
+  'stream-down': "Stream offline. It comes back when `tmux-remote-viewer share` runs again.",
   unreachable: 'Reconnecting…',
   'player-failed': "The player didn't load. Reload the page to try again.",
 };
@@ -147,7 +147,7 @@ async function claim(code) {
   return status === 200 ? null : (body.error ?? "Couldn't reach the server. Try again.");
 }
 
-// The QR code `bon5ai-remote share` prints opens <public url>#code=XXXX-XXXX. A fragment never leaves
+// The QR code `tmux-remote-viewer share` prints opens <public url>#code=XXXX-XXXX. A fragment never leaves
 // the browser, so the code is in no CDN, Funnel or gate log. Claim it, and take it out
 // of the address bar so a reload or a shared link doesn't carry a used code.
 async function claimFromLink() {

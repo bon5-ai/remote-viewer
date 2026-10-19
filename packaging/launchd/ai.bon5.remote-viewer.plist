@@ -5,8 +5,8 @@
   <key>Label</key><string>ai.bon5.remote-viewer</string>
   <key>ProgramArguments</key>
   <array>
-    <!-- The installed command; `which bon5ai-remote` prints it. -->
-    <string>/usr/local/bin/bon5ai-remote</string>
+    <!-- The installed command; `which tmux-remote-viewer` prints it. -->
+    <string>/usr/local/bin/tmux-remote-viewer</string>
     <string>serve</string>
   </array>
   <key>RunAtLoad</key><true/>

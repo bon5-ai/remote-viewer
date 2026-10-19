@@ -28,15 +28,15 @@ these happens:
 ## Signing in Claude Code
 
 ```bash
-claude mcp add --transport http bon5ai-remote https://term.example.com/mcp
+claude mcp add --transport http tmux-remote-viewer https://term.example.com/mcp
 ```
 
-1. In Claude Code, run `/mcp`, choose **bon5ai-remote**, then **Authenticate**. A browser
+1. In Claude Code, run `/mcp`, choose **tmux-remote-viewer**, then **Authenticate**. A browser
    page opens:
 
    ```
    Approve this agent at your terminal
-       bon5ai-remote agent approve K7QM
+       tmux-remote-viewer agent approve K7QM
        Request ID   K7QM
        Agent        Claude Code (the agent chose this name; it is not verified)
        Returns to   localhost:53172
@@ -45,7 +45,7 @@ claude mcp add --transport http bon5ai-remote https://term.example.com/mcp
 2. In a shell on the gate's machine:
 
    ```
-   $ bon5ai-remote agent approve K7QM
+   $ tmux-remote-viewer agent approve K7QM
    K7QM  "Claude Code" (self-registered: the name is not verified), returns to localhost:53172, 20s ago
    Approve only a request whose ID is on a sign-in page you opened yourself.
 
@@ -66,7 +66,7 @@ can approve one. Approve only an ID that is on a page you opened yourself.
 
 ### Claude Code on a machine without a browser
 
-`claude mcp login bon5ai-remote --no-browser` prints the sign-in URL:
+`claude mcp login tmux-remote-viewer --no-browser` prints the sign-in URL:
 
 1. Open it on any machine.
 2. Approve the request ID at the gate's machine.
@@ -76,11 +76,11 @@ can approve one. Approve only an ID that is on a page you opened yourself.
 ### `claude -p`, the Agent SDK, CI: a token file instead of OAuth
 
 ```bash
-bon5ai-remote agent token --scope observe --label "nightly" --out ~/.config/bon5ai-remote/nightly.token
+tmux-remote-viewer agent token --scope observe --label "nightly" --out ~/.config/bon5ai-remote/nightly.token
 ```
 
 This writes the token to a 0600 file and prints a `claude mcp add-json ...` line. That
-line configures a `headersHelper` (`bon5ai-remote agent headers <file>`), which Claude Code
+line configures a `headersHelper` (`tmux-remote-viewer agent headers <file>`), which Claude Code
 runs on each connection. The token never appears on screen or in the Claude Code config.
 `agent headers` refuses to print to a terminal.
 
@@ -98,11 +98,11 @@ only thing that tells your sign-in apart from a stranger's.
 ## Managing grants
 
 ```bash
-bon5ai-remote agent requests            # sign-ins waiting for approval
-bon5ai-remote agent list                # who has access, scope, pane, expiry, last call
-bon5ai-remote agent revoke g-5e1f09aa   # one grant
-bon5ai-remote agent revoke --all        # every grant (add --viewers to sign browsers out too)
-bon5ai-remote agent retarget g-5e1f09aa --pane %4
+tmux-remote-viewer agent requests            # sign-ins waiting for approval
+tmux-remote-viewer agent list                # who has access, scope, pane, expiry, last call
+tmux-remote-viewer agent revoke g-5e1f09aa   # one grant
+tmux-remote-viewer agent revoke --all        # every grant (add --viewers to sign browsers out too)
+tmux-remote-viewer agent retarget g-5e1f09aa --pane %4
 ```
 
 In the shared session, `prefix + X` revokes every agent. Change the key with `kill_key`.

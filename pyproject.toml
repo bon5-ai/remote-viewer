@@ -39,7 +39,7 @@ Homepage = "https://github.com/bon5-ai/remote-viewer"
 Issues = "https://github.com/bon5-ai/remote-viewer/issues"
 
 [project.scripts]
-bon5ai-remote = "bon5ai_remote.cli:main"
+tmux-remote-viewer = "bon5ai_remote.cli:main"
 
 [tool.hatch.version]
 path = "src/bon5ai_remote/__init__.py"

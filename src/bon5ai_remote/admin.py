@@ -42,7 +42,7 @@ class AdminServer(socketserver.ThreadingUnixStreamServer):
 
 
 class AdminHandler(BaseHTTPRequestHandler):
-    server_version = "bon5ai-remote-admin"
+    server_version = "tmux-remote-viewer-admin"
     sys_version = ""
 
     @property
@@ -104,7 +104,7 @@ class AdminHandler(BaseHTTPRequestHandler):
             code = state.gate.mint()
             if code is None:
                 return self.fail(409, f"No tmux session named '{state.cfg.session}' is running. "
-                                      "Start one with: bon5ai-remote share")
+                                      "Start one with: tmux-remote-viewer share")
             return self.send_json(200, {"code": code, "ttl": state.cfg.code_ttl})
         if self.path in ("/agent/approve", "/agent/token"):
             return self.grant(body, direct=self.path == "/agent/token")

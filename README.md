@@ -36,7 +36,7 @@ Nobody gets in without the person at the terminal:
 
 ```bash
 uv tool install bon5ai-remote-viewer      # or: pipx install bon5ai-remote-viewer
-bon5ai-remote doctor
+tmux-remote-viewer doctor
 ```
 
 From a checkout: `uv tool install --editable .`
@@ -44,8 +44,8 @@ From a checkout: `uv tool install --editable .`
 ## Quick start
 
 ```bash
-bon5ai-remote install-service --enable     # run the gate as a user service (systemd or launchd)
-bon5ai-remote share                        # start the shared session: prints a QR code and a code
+tmux-remote-viewer install-service --enable     # run the gate as a user service (systemd or launchd)
+tmux-remote-viewer share                        # start the shared session: prints a QR code and a code
 ```
 
 Open `http://127.0.0.1:8095/` and enter the code, or scan the QR code once the gate has a
@@ -54,20 +54,20 @@ public URL (see [Hosting](#hosting)).
 | In the session | |
 |---|---|
 | detach | `Ctrl-b d`. Viewers keep watching. |
-| rejoin | `bon5ai-remote share` |
-| another viewer code | `bon5ai-remote code` |
+| rejoin | `tmux-remote-viewer share` |
+| another viewer code | `tmux-remote-viewer code` |
 | end | exit the last shell. Viewers see "Session ended" and agents lose access. |
 | revoke every agent | `prefix + X` |
 
 ### Add an agent
 
 ```bash
-claude mcp add --transport http bon5ai-remote http://127.0.0.1:8095/mcp
+claude mcp add --transport http tmux-remote-viewer http://127.0.0.1:8095/mcp
 ```
 
 1. In Claude Code, run `/mcp` and choose **Authenticate**. A page opens with a request ID
    such as `K7QM`.
-2. In your shell, run `bon5ai-remote agent approve K7QM`, then pick a scope and a pane.
+2. In your shell, run `tmux-remote-viewer agent approve K7QM`, then pick a scope and a pane.
 
 Details are in [docs/agents.md](docs/agents.md), including clients that can't open a
 browser.
@@ -129,8 +129,8 @@ annotated [config.example.toml](config.example.toml), and copy it to
 | `BON5AI_REMOTE_PROXY_SECRET` | the proxy header's secret (or use `proxy_secret_file`) |
 | `BON5AI_REMOTE_RUNTIME_DIR` | where the sockets live (default `$XDG_RUNTIME_DIR/bon5ai-remote`) |
 
-`bon5ai-remote config` shows the effective settings without the secret, and
-`bon5ai-remote doctor` checks the whole setup.
+`tmux-remote-viewer config` shows the effective settings without the secret, and
+`tmux-remote-viewer doctor` checks the whole setup.
 
 ## How the viewer works
 
@@ -153,10 +153,10 @@ annotated [config.example.toml](config.example.toml), and copy it to
 |---|---|
 | `421 Misdirected request` | The proxy sends a Host the gate doesn't expect. Find the `refused Host '...'` line in the gate's log and add that value to `allowed_hosts`. |
 | `404` on every page behind CloudFront | `proxy_header` or the secret doesn't match the distribution's origin header. |
-| "Stream offline" | Run `bon5ai-remote share` again; it restarts the stream. Errors are in `~/.local/state/bon5ai-remote/stream.log`. |
+| "Stream offline" | Run `tmux-remote-viewer share` again; it restarts the stream. Errors are in `~/.local/state/bon5ai-remote/stream.log`. |
 | An agent can't find the authorization server | Check that `<public_url>.well-known/openid-configuration` is reachable. Under a path, also see the [discovery note](docs/deploy/aws-cloudfront.md#mounting-under-a-path-of-an-existing-distribution). |
 | `... is too long for a Unix socket` | Set `BON5AI_REMOTE_RUNTIME_DIR` to a shorter directory. |
-| Gate logs: `journalctl --user -u bon5ai-remote -f` | |
+| Gate logs: `journalctl --user -u tmux-remote-viewer -f` | |
 
 ## Development
 

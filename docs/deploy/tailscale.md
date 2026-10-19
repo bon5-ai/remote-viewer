@@ -28,7 +28,7 @@ deny_funnel = true      # refuse anything that arrives through Funnel by mistake
 Agents on any tailnet device:
 
 ```bash
-claude mcp add --transport http bon5ai-remote https://your-machine.your-tailnet.ts.net/mcp
+claude mcp add --transport http tmux-remote-viewer https://your-machine.your-tailnet.ts.net/mcp
 ```
 
 ## Funnel (public)

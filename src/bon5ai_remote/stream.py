@@ -8,7 +8,7 @@ whenever the window changes. On each resize asciinema gets SIGWINCH, resizes the
 hidden read-only tmux client to match, and streams a resize event. The browser
 player then re-fits the new grid to the viewport.
 
-``bon5ai-remote share`` starts this in its own session, so it outlives the SSH
+``tmux-remote-viewer share`` starts this in its own session, so it outlives the SSH
 connection. It exits when asciinema does, which happens when the tmux session
 ends. Its pty output, a copy of the session, is read and discarded.
 
@@ -108,7 +108,7 @@ def run(socket_path: Path, session: str, listen: str) -> int:
     tmux = Tmux(socket_path, session)
     size = client_size(tmux)
     if size is None:
-        print(f"bon5ai-remote stream: no tmux session named '{session}'", file=sys.stderr)
+        print(f"tmux-remote-viewer stream: no tmux session named '{session}'", file=sys.stderr)
         return 1
     argv = command(socket_path, session, listen)
     for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):

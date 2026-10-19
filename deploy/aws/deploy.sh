@@ -65,5 +65,5 @@ Next, in ~/.config/bon5ai-remote/config.toml:
   proxy_header = "$HEADER"
   allowed_hosts = ["$ORIGIN", "$ORIGIN:$PORT"]
 
-Then restart the gate (systemctl --user restart bon5ai-remote) and run: bon5ai-remote doctor
+Then restart the gate (systemctl --user restart tmux-remote-viewer) and run: tmux-remote-viewer doctor
 EOF

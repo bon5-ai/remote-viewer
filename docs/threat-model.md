@@ -64,7 +64,7 @@
   one character at a time, use aliases, `$(…)`, base64, or a REPL.
 - **Other users on the same host.** asciinema's local stream server (127.0.0.1, random
   port) has no authentication. Any local user who finds the port can watch.
-  `bon5ai-remote doctor` warns when other users are logged in.
+  `tmux-remote-viewer doctor` warns when other users are logged in.
 - **Who can read the CloudFront secret.** Anyone who can read the distribution's config in
   your AWS account can read the origin secret.
 - **Hosted OAuth clients.** A web chat's shared callback in `allowed_redirect_uris` means

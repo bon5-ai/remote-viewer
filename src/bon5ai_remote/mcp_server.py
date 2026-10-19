@@ -218,7 +218,7 @@ def snapshot(state: State, grant: Grant, history: int = 0) -> Snapshot:
     pane = state.tmux.pane(grant.pane_id)
     if pane is None or pane.session_key != grant.session_key or pane.dead:
         raise ToolError("pane_gone", f"Pane {grant.pane_id} is gone. Ask the person to run "
-                                     f"`bon5ai-remote agent retarget {grant.id}` to pick another pane.")
+                                     f"`tmux-remote-viewer agent retarget {grant.id}` to pick another pane.")
     captured = state.tmux.capture(pane.id, 0 if pane.alternate_on else history)
     if captured is None:
         raise ToolError("pane_gone", f"Pane {grant.pane_id} can't be read.")

@@ -4,7 +4,7 @@
    whose metadata document the gate fetches (CIMD).
 2. ``/authorize`` opens a *pending request*. The browser shows a short request ID
    and holds a secret cookie; nothing secret is typed into the browser.
-3. The person runs ``bon5ai-remote agent approve`` in a shell on this machine and
+3. The person runs ``tmux-remote-viewer agent approve`` in a shell on this machine and
    picks a scope and a pane. That creates a *grant* and a one-time auth code.
 4. The browser's poll receives the redirect carrying the code, and the client
    trades code + PKCE verifier at ``/token`` for an access and a refresh token.
