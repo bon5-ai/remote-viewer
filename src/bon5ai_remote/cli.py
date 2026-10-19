@@ -446,7 +446,7 @@ def cmd_config(cfg: Config, args) -> int:
 SYSTEMD_UNIT = """\
 [Unit]
 Description=BON5AI Remote Viewer gate
-Documentation=https://github.com/mikeg0/bon5ai-remote-viewer
+Documentation=https://github.com/bon5-ai/remote-viewer
 After=network-online.target
 Wants=network-online.target
 
