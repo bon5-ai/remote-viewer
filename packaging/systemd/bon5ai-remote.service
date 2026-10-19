@@ -1,0 +1,17 @@
+[Unit]
+Description=BON5AI Remote Viewer gate
+Documentation=https://github.com/mikeg0/bon5ai-remote-viewer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Optional: BON5AI_REMOTE_PROXY_SECRET=... (the proxy secret). Keep secrets out of this unit file.
+EnvironmentFile=-%h/.config/bon5ai-remote/env
+ExecStart=%h/.local/bin/bon5ai-remote serve
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

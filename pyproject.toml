@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bon5ai-remote-viewer"
+dynamic = ["version"]
+description = "Share a tmux session read-only with browsers (QR-code pairing), and with AI agents over MCP, approved at the terminal."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "src/bon5ai_remote/static/fonts/OFL.txt"]
+requires-python = ">=3.11"
+authors = [{ name = "Bon5AI LLC" }]
+keywords = ["tmux", "terminal", "sharing", "mcp", "model-context-protocol", "agents", "oauth", "asciinema"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Topic :: Terminals",
+    "Topic :: Security",
+]
+dependencies = [
+    "mcp>=2.3,<3",
+    "starlette>=0.46",
+    "anyio>=4.5",
+    "uvicorn>=0.32",
+    "websockets>=14",
+    "segno>=1.6",
+]
+
+[project.optional-dependencies]
+test = ["httpx>=0.27"]
+
+[project.urls]
+Homepage = "https://github.com/mikeg0/bon5ai-remote-viewer"
+Issues = "https://github.com/mikeg0/bon5ai-remote-viewer/issues"
+
+[project.scripts]
+bon5ai-remote = "bon5ai_remote.cli:main"
+
+[tool.hatch.version]
+path = "src/bon5ai_remote/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bon5ai_remote"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "docs", "deploy", "packaging", "README.md", "SECURITY.md", "LICENSE",
+           "config.example.toml", "CHANGELOG.md"]

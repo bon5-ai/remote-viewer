@@ -1,0 +1,64 @@
+# BON5AI Remote Viewer configuration.
+# Copy to ~/.config/bon5ai-remote/config.toml (or point BON5AI_REMOTE_CONFIG at it).
+# Nothing here is secret. The one secret, the proxy header's value, lives in its own
+# 0600 file (proxy_secret_file) or in BON5AI_REMOTE_PROXY_SECRET.
+# Every setting is optional; with no file at all you get one loopback listener on 8095.
+
+# The tmux session to share. It runs on a dedicated tmux server
+# ($XDG_RUNTIME_DIR/bon5ai-remote/tmux.sock), never your everyday one.
+session = "share"
+
+# Viewer pairing codes and viewer sessions.
+code_ttl_seconds = 600            # a code works once, for this long
+viewer_ttl_seconds = 43200        # a paired browser stays signed in at most this long
+
+# Agents. A grant never outlives agent_ttl_seconds, its tmux session, or a gate restart.
+agent_ttl_seconds = 43200
+access_token_ttl_seconds = 3600
+
+# prefix + this key in the shared session revokes every agent. "" binds nothing.
+kill_key = "X"
+
+# Agent sign-ins may only return to localhost (any port). Add exact https callbacks here
+# to allow a hosted client, e.g. a web chat's connector. Anyone using that service can
+# start a sign-in to your gate, so the request ID check at approval is what protects you.
+allowed_redirect_uris = []
+
+# Let agents identify themselves with a Client ID Metadata Document (an https URL the gate
+# fetches, with SSRF guards). The approval prompt then shows a verified host name.
+client_metadata_documents = true
+
+# The file holding the proxy secret (mode 0600). Needed when a listener sets proxy_header.
+# proxy_secret_file = "~/.config/bon5ai-remote/proxy-secret"
+
+# Bind a private, non-loopback address (e.g. a docker bridge gateway for a local reverse
+# proxy). Public or unspecified addresses (0.0.0.0) are always refused.
+allow_private_listen = false
+
+# One table per address the gate listens on.
+[[listener]]
+address = "127.0.0.1:8095"
+# Where browsers and agents reach this listener. https unless it is a loopback address.
+# A path (https://example.com/remote/) is fine: the gate strips it whether or not the proxy does.
+public_url = "http://127.0.0.1:8095/"
+viewer = true                     # the browser viewer and its pairing codes
+mcp = true                        # the MCP endpoint (/mcp) and agent sign-in
+# Extra Host header values to accept: e.g. your Funnel name, which is the Host CloudFront
+# sends to its origin. The gate logs "refused Host ..." for anything else.
+allowed_hosts = []
+# Behind CloudFront (or another proxy you can't otherwise tell apart): the header the proxy
+# adds with the secret. Requests without it get a 404.
+proxy_header = ""
+# With proxy_header: a header naming the client, for per-client lockouts,
+# e.g. "CloudFront-Viewer-Address" (add it to the origin request policy).
+client_ip_header = ""
+# Refuse requests that arrived through Tailscale Funnel (for a tailnet-only listener).
+deny_funnel = false
+
+# Example: a second, tailnet-only listener for agents, published with `tailscale serve`.
+# [[listener]]
+# address = "127.0.0.1:8096"
+# public_url = "https://your-machine.your-tailnet.ts.net:8444/"
+# viewer = false
+# mcp = true
+# deny_funnel = true

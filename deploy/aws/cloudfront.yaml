@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  BON5AI Remote Viewer: a CloudFront distribution in front of a gate published with
+  Tailscale Funnel (or any HTTPS origin). CloudFront adds a secret header to every
+  request so the gate can refuse traffic that went around it. Nothing is cached.
+
+Parameters:
+  OriginDomainName:
+    Type: String
+    Description: The gate's HTTPS origin, e.g. your-machine.your-tailnet.ts.net (Tailscale Funnel).
+    AllowedPattern: "^[A-Za-z0-9.-]+$"
+  OriginHttpsPort:
+    Type: Number
+    Default: 443
+    AllowedValues: [443, 8443, 10000]
+    Description: The origin's HTTPS port. Tailscale Funnel serves on 443, 8443 or 10000.
+  OriginSecretHeaderName:
+    Type: String
+    Default: X-Origin-Verify
+    AllowedPattern: "^[A-Za-z0-9-]+$"
+    Description: The header CloudFront adds; the gate's proxy_header setting must match.
+  OriginSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    AllowedPattern: "^[A-Za-z0-9_-]+$"
+    Description: >-
+      The header's value; the gate's proxy secret must match. deploy.sh generates it into a
+      0600 file and passes it from there, so it never appears on a command line.
+  AlternateDomainName:
+    Type: String
+    Default: ""
+    Description: Optional custom domain such as term.example.com (needs AcmCertificateArn).
+  AcmCertificateArn:
+    Type: String
+    Default: ""
+    Description: Optional ACM certificate in us-east-1 covering AlternateDomainName.
+  PriceClass:
+    Type: String
+    Default: PriceClass_100
+    AllowedValues: [PriceClass_100, PriceClass_200, PriceClass_All]
+
+Conditions:
+  HasCustomDomain: !And
+    - !Not [!Equals [!Ref AlternateDomainName, ""]]
+    - !Not [!Equals [!Ref AcmCertificateArn, ""]]
+
+Resources:
+  # CloudFront forwards the Authorization header (the MCP bearer token) only when it is
+  # part of the cache key, and a cache key can only hold headers when caching is allowed,
+  # hence MaxTTL 1. Every response from the gate says Cache-Control: no-store, and the
+  # default TTL is 0, so nothing is actually cached.
+  NoCacheWithAuthorization:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub "${AWS::StackName}-forward-authorization"
+        Comment: Forward Authorization; the gate marks every response no-store
+        MinTTL: 0
+        DefaultTTL: 0
+        MaxTTL: 1
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingGzip: false
+          EnableAcceptEncodingBrotli: false
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers: [Authorization]
+          CookiesConfig:
+            CookieBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "BON5AI Remote Viewer (${AWS::StackName})"
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: !Ref PriceClass
+        Aliases: !If [HasCustomDomain, [!Ref AlternateDomainName], !Ref "AWS::NoValue"]
+        ViewerCertificate: !If
+          - HasCustomDomain
+          - AcmCertificateArn: !Ref AcmCertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: gate
+            DomainName: !Ref OriginDomainName
+            CustomOriginConfig:
+              HTTPSPort: !Ref OriginHttpsPort
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+              OriginReadTimeout: 30
+              OriginKeepaliveTimeout: 5
+            OriginCustomHeaders:
+              - HeaderName: !Ref OriginSecretHeaderName
+                HeaderValue: !Ref OriginSecret
+        DefaultCacheBehavior:
+          TargetOriginId: gate
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          CachedMethods: [GET, HEAD]
+          Compress: false
+          CachePolicyId: !Ref NoCacheWithAuthorization
+          # Managed-AllViewerExceptHostHeader: every viewer header, cookie and query string
+          # except Host, which must stay the origin's name for Funnel to route it.
+          OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+
+Outputs:
+  DistributionId:
+    Value: !Ref Distribution
+  DistributionDomainName:
+    Value: !GetAtt Distribution.DomainName
+  PublicUrl:
+    Description: The gate's public_url.
+    Value: !If
+      - HasCustomDomain
+      - !Sub "https://${AlternateDomainName}/"
+      - !Sub "https://${Distribution.DomainName}/"

@@ -1,0 +1,225 @@
+/* BON5AI Remote Viewer: the viewer page and the agent sign-in page.
+
+   The terminal face is hosted here. The player's own stack names Cascadia Code
+   first and then Menlo, Consolas and a generic monospace, but it ships none of
+   those files, and the gate's font-src is 'self'. A Mac browser therefore draws
+   the terminal in Menlo and a phone in its generic monospace. Those faces have no
+   braille, and their box drawing does not join; a terminal emulator strokes those
+   rules itself, so the same session looks like the characters never arrived. Cascadia Mono is the
+   face the player is built around, with the box drawing, braille and symbols
+   this terminal prints, and no ligatures to shift a cell. Weights 200–700, so
+   bold stays the same face instead of a synthesized one with different metrics. */
+
+@font-face {
+  font-family: "Cascadia Mono";
+  src: url("fonts/CascadiaMono.woff2") format("woff2");
+  font-weight: 200 700;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Cascadia Mono";
+  src: url("fonts/CascadiaMonoItalic.woff2") format("woff2");
+  font-weight: 200 700;
+  font-style: italic;
+  font-display: block;
+}
+
+:root {
+  --sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --accent: oklch(0.64 0.15 38);
+  --accent-hover: oklch(0.59 0.16 38);
+  --on-accent: oklch(0.99 0.01 60);
+  --ok: oklch(0.62 0.14 150);
+  --warn: oklch(0.72 0.16 62);
+  --danger: oklch(0.60 0.20 25);
+  --r-md: 10px;
+  --r-lg: 14px;
+
+  --bg: oklch(0.975 0.004 70);
+  --panel: oklch(1 0.001 70);
+  --inset: oklch(0.955 0.004 70);
+  --border: oklch(0.915 0.005 70);
+  --border-strong: oklch(0.86 0.006 70);
+  --text: oklch(0.24 0.012 55);
+  --text-muted: oklch(0.52 0.012 55);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: oklch(0.165 0.006 60);
+    --panel: oklch(0.205 0.007 60);
+    --inset: oklch(0.185 0.006 60);
+    --border: oklch(0.285 0.008 60);
+    --border-strong: oklch(0.35 0.009 60);
+    --text: oklch(0.95 0.004 75);
+    --text-muted: oklch(0.70 0.008 75);
+    color-scheme: dark;
+  }
+}
+
+[hidden] { display: none !important; }
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 var(--sans);
+}
+
+code { font-family: var(--mono); font-size: 0.92em; }
+
+.rm-muted { color: var(--text-muted); }
+
+/* ---- pairing and ended cards ---- */
+.rm-card {
+  max-width: 400px;
+  margin: 12vh auto 0;
+  padding: 28px 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+
+@media (max-width: 440px) {
+  .rm-card { margin: 16px; }
+}
+
+.rm-card h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; }
+.rm-card p { margin: 0 0 18px; }
+
+.rm-label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--text-muted); }
+
+#code {
+  display: block;
+  width: 100%;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  background: var(--inset);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  font: 600 22px/1.2 var(--mono);
+  letter-spacing: 0.12em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.rm-btn {
+  padding: 9px 16px;
+  background: var(--accent);
+  color: var(--on-accent);
+  border: 0;
+  border-radius: var(--r-md);
+  font: 600 14px var(--sans);
+  cursor: pointer;
+}
+
+.rm-btn:hover { background: var(--accent-hover); }
+#pair-form .rm-btn { width: 100%; }
+
+.rm-error { margin: 14px 0 0; min-height: 1.5em; color: var(--danger); }
+
+/* ---- viewer ----
+   No chrome: the terminal fills the viewport, and the player's fit: 'both' scales its
+   fixed grid to the largest size that fits. The margin left on one axis is painted in
+   the terminal's own background (--rm-term-bg, copied from the player by remote.js). */
+.rm-view {
+  position: fixed;
+  inset: 0;
+  background: var(--rm-term-bg, oklch(0.12 0.004 60)); /* theme-fixed: the terminal is dark in both themes */
+  overflow: hidden;
+}
+
+.rm-player {
+  position: absolute;
+  inset: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+.rm-player .ap-wrapper { height: 100%; align-items: center; }
+.rm-player .ap-player { margin: auto 0; }
+
+.rm-notice {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+  color: oklch(0.72 0.008 75); /* theme-fixed: muted text on the always-dark terminal */
+  font: 15px/1.5 var(--sans);
+}
+
+/* Floating full-screen toggle. Quiet until hovered or focused so it doesn't cover the
+   top-right of the terminal more than it has to. */
+.rm-fs {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top));
+  right: calc(10px + env(safe-area-inset-right));
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid oklch(1 0 0 / 0.18);
+  border-radius: var(--r-md);
+  background: oklch(0 0 0 / 0.45);
+  color: oklch(1 0 0);
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.rm-fs:hover, .rm-fs:focus-visible { opacity: 1; }
+@media (hover: none) { .rm-fs { opacity: 0.7; } }
+
+.rm-fs svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.rm-fs .rm-fs-exit, .rm-fs[aria-pressed="true"] .rm-fs-enter { display: none; }
+.rm-fs[aria-pressed="true"] .rm-fs-exit { display: block; }
+
+/* ---- agent sign-in page (authorize.html) ---- */
+.rm-request {
+  display: block;
+  margin: 4px 0 18px;
+  padding: 12px;
+  background: var(--inset);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  font: 600 34px/1.2 var(--mono);
+  letter-spacing: 0.2em;
+  text-align: center;
+}
+
+.rm-facts { margin: 0 0 18px; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; }
+.rm-facts dt { color: var(--text-muted); }
+.rm-facts dd { margin: 0; overflow-wrap: anywhere; }
+
+.rm-command {
+  display: block;
+  margin: 6px 0 18px;
+  padding: 10px 12px;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  font: 14px/1.4 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.rm-warn { color: var(--warn); }
+.rm-ok { color: var(--ok); }

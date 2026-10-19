@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+.coverage
+htmlcov/
+# Secrets and tokens never belong in the repository.
+*.token
+proxy-secret
+.env

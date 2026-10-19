@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Remote Viewer</title>
+<!-- Relative URLs only: this page may be served under a path in public and at / when hit directly. -->
+<link rel="stylesheet" href="remote.css">
+<script src="remote.js" defer></script>
+</head>
+<body>
+<main id="pair" class="rm-card" hidden>
+  <h1>Remote Viewer</h1>
+  <p class="rm-muted">Scan the QR code that <code>bon5ai-remote share</code> printed in your terminal, or enter its code.</p>
+  <form id="pair-form" autocomplete="off">
+    <label class="rm-label" for="code">Pairing code</label>
+    <input id="code" name="code" inputmode="text" autocapitalize="characters" spellcheck="false"
+           placeholder="XXXX-XXXX" maxlength="12" required>
+    <button class="rm-btn" type="submit">View terminal</button>
+  </form>
+  <p id="pair-error" class="rm-error" role="alert"></p>
+</main>
+
+<section id="view" class="rm-view" hidden>
+  <div id="player" class="rm-player"></div>
+  <p id="notice" class="rm-notice" role="status" hidden></p>
+  <button id="fullscreen" class="rm-fs" type="button" aria-label="Enter full screen" aria-pressed="false" hidden>
+    <svg class="rm-fs-enter" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>
+    </svg>
+    <svg class="rm-fs-exit" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/>
+    </svg>
+  </button>
+</section>
+
+<main id="ended" class="rm-card" hidden>
+  <h1>Session ended</h1>
+  <p class="rm-muted">The shared terminal session has closed.</p>
+  <button id="again" class="rm-btn" type="button">Enter a new code</button>
+</main>
+</body>
+</html>

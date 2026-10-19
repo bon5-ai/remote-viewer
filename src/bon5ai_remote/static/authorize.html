@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Approve agent</title>
+<!-- Relative URLs only: this page is served under the gate's public path. Every value the
+     page shows comes from authorize-status and is set with textContent. -->
+<link rel="stylesheet" href="remote.css">
+<script src="authorize.js" defer></script>
+</head>
+<body>
+<main class="rm-card">
+  <h1 id="title">Approve this agent at your terminal</h1>
+  <section id="waiting" hidden>
+    <p class="rm-muted">An agent is asking for access to your shared terminal. Nothing is granted until you
+      approve it in a shell on the machine that runs the gate:</p>
+    <code class="rm-command">bon5ai-remote agent approve <span id="command-id"></span></code>
+    <p class="rm-muted">Check that the request ID there matches this one:</p>
+    <span id="request-id" class="rm-request"></span>
+    <dl class="rm-facts">
+      <dt>Agent</dt><dd id="client"></dd>
+      <dt>Returns to</dt><dd id="redirect"></dd>
+      <dt>Expires in</dt><dd id="expires"></dd>
+    </dl>
+    <p class="rm-muted">If you didn't start this sign-in, don't approve it. It expires by itself.</p>
+  </section>
+  <p id="message" class="rm-muted" role="status"></p>
+</main>
+</body>
+</html>
