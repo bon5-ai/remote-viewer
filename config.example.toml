@@ -9,7 +9,7 @@
 session = "share"
 
 # Viewer pairing codes and viewer sessions.
-code_ttl_seconds = 600            # a code works once, for this long
+code_ttl_seconds = 600            # a code works once, for this long (60-3600; `code --ttl` overrides it)
 viewer_ttl_seconds = 43200        # a paired browser stays signed in at most this long
 
 # Agents. A grant never outlives agent_ttl_seconds, its tmux session, or a gate restart.

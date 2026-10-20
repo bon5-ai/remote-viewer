@@ -8,6 +8,8 @@ import sys
 import time
 import unittest
 
+from bon5ai_remote import cli
+
 PROMPT = b"Scope [o/s/c]: "
 # The child execs a fresh interpreter: running Python in a fork of this multi-threaded
 # test process can deadlock, on macOS above all.
@@ -57,6 +59,12 @@ class TtyInputTests(unittest.TestCase):
             if code is None:  # never leave a child behind, whatever failed
                 os.kill(pid, signal.SIGKILL)
                 os.waitpid(pid, 0)
+
+
+class ArgumentTests(unittest.TestCase):
+    def test_code_ttl(self):
+        self.assertEqual(cli.parser().parse_args(["code", "--ttl", "30m"]).ttl, 1800)
+        self.assertIsNone(cli.parser().parse_args(["code"]).ttl)  # the gate's code_ttl_seconds
 
 
 if __name__ == "__main__":

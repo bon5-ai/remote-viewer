@@ -135,6 +135,14 @@ class AdminSocketTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertRegex(body["code"], r"^[A-Z0-9]{4}-[A-Z0-9]{4}$")
 
+    def test_code_lifetime_is_bounded(self):
+        self.assertEqual(call(self.path, "POST", "/pair")[1]["ttl"], 600)
+        self.assertEqual(call(self.path, "POST", "/pair", {"ttl": 1800})[1]["ttl"], 1800)
+        for ttl in (59, 3601, "1800", True, None):
+            status, body = call(self.path, "POST", "/pair", {"ttl": ttl})
+            self.assertEqual(status, 400, ttl)
+            self.assertEqual(body["error"], "A code can last 1 to 60 minutes.")
+
     def test_no_session_no_code(self):
         self.tmux.session = None
         status, body = call(self.path, "POST", "/pair")

@@ -19,6 +19,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 from .agents import GRANT_ID, SCOPES, NotFound
+from .config import CODE_TTL_RANGE
 from .state import State
 from .tmux import PANE_ID
 
@@ -101,11 +102,15 @@ class AdminHandler(BaseHTTPRequestHandler):
         state = self.state
         body = self.body()
         if self.path == "/pair":
-            code = state.gate.mint()
+            ttl = body.get("ttl", state.cfg.code_ttl)
+            low, high = CODE_TTL_RANGE
+            if not isinstance(ttl, int) or isinstance(ttl, bool) or not low <= ttl <= high:
+                return self.fail(400, f"A code can last {low // 60} to {high // 60} minutes.")
+            code = state.gate.mint(ttl)
             if code is None:
                 return self.fail(409, f"No tmux session named '{state.cfg.session}' is running. "
                                       "Start one with: tmux-remote-viewer share")
-            return self.send_json(200, {"code": code, "ttl": state.cfg.code_ttl})
+            return self.send_json(200, {"code": code, "ttl": ttl})
         if self.path in ("/agent/approve", "/agent/token"):
             return self.grant(body, direct=self.path == "/agent/token")
         if self.path == "/agent/deny":

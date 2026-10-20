@@ -54,6 +54,14 @@ class GateTests(unittest.TestCase):
         with self.assertRaises(gate.InvalidCode):
             self.gate.claim(code)
 
+    def test_code_lifetime_can_be_chosen(self):
+        early, late = self.gate.mint(1800), self.gate.mint(1800)
+        self.clock.now += 1799
+        self.assertTrue(self.gate.claim(early))
+        self.clock.now += 2
+        with self.assertRaises(gate.InvalidCode):
+            self.gate.claim(late)
+
     def test_no_session_no_code(self):
         self.fake.session = None
         self.assertIsNone(self.gate.mint())

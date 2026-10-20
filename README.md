@@ -55,7 +55,7 @@ public URL (see [Hosting](#hosting)).
 |---|---|
 | detach | `Ctrl-b d`. Viewers keep watching. |
 | rejoin | `tmux-remote-viewer share` |
-| another viewer code | `tmux-remote-viewer code` |
+| another viewer code | `tmux-remote-viewer code`. It lasts 10 minutes; `--ttl 30m` sets anything up to 1 hour. |
 | end | exit the last shell. Viewers see "Session ended" and agents lose access. |
 | revoke every agent | `prefix + X` |
 

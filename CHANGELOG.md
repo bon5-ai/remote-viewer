@@ -10,6 +10,8 @@
 - The pairing code field formats as you type or paste: uppercase, letters and digits
   only, at most 8, with the dash added after the fourth. A short code is caught in the
   page instead of counting as a wrong guess.
+- `tmux-remote-viewer code --ttl 30m` sets how long one code lasts, from 1 minute to 1 hour,
+  without changing `code_ttl_seconds`.
 
 ## 0.1.0 (2026-10-19)
 

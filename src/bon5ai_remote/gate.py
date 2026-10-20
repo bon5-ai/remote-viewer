@@ -151,7 +151,7 @@ class Gate:
         while self._all_failures and self._all_failures[0] <= cutoff:
             self._all_failures.popleft()
 
-    def mint(self) -> str | None:
+    def mint(self, ttl: int | None = None) -> str | None:
         session = self.session_lookup()
         if session is None:
             return None
@@ -159,7 +159,7 @@ class Gate:
         now = self.clock()
         with self._lock:
             self._prune(now)
-            self._codes[digest(code)] = (session, now + self.code_ttl)
+            self._codes[digest(code)] = (session, now + (ttl or self.code_ttl))
         return f"{code[:4]}-{code[4:]}"
 
     def claim(self, typed: str, client: str = "") -> str:

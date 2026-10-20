@@ -29,6 +29,7 @@ SECRET_FILE_ENV = "BON5AI_REMOTE_PROXY_SECRET_FILE"
 RUNTIME_ENV = "BON5AI_REMOTE_RUNTIME_DIR"
 MAX_SOCKET_PATH = 100  # sun_path is 104 bytes on macOS and 108 on Linux, including the NUL
 APP = "bon5ai-remote"
+CODE_TTL_RANGE = (60, 3600)  # seconds: code_ttl_seconds, and `code --ttl`
 
 SESSION_NAME = re.compile(r"[A-Za-z0-9_-]{1,32}")
 KILL_KEY = re.compile(r"(?:[CM]-)?[A-Za-z0-9]")
@@ -326,7 +327,7 @@ def load(path: Path | str | None = None, env=os.environ) -> Config:
         audit_log=Path(audit_log).expanduser() if audit_log else state_dir / "audit.jsonl",
         listeners=listeners,
         config_path=config_path if config_path.exists() else None,
-        code_ttl=_ttl(data, "code_ttl_seconds", 600, 60, 3600),
+        code_ttl=_ttl(data, "code_ttl_seconds", 600, *CODE_TTL_RANGE),
         viewer_ttl=_ttl(data, "viewer_ttl_seconds", 12 * 3600, 300, 7 * 86400),
         agent_ttl=_ttl(data, "agent_ttl_seconds", 12 * 3600, 300, 7 * 86400),
         access_token_ttl=_ttl(data, "access_token_ttl_seconds", 3600, 60, 86400),

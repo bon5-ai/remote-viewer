@@ -119,7 +119,7 @@ def print_code(cfg: Config, code: str, ttl: int) -> None:
         for line in qr_lines(f"{url}#code={code}"):
             print("    " + line)
         print(f"\n    Scan with a phone's camera, or enter the code at {url}")
-    print(f"    Pairing code:  {code}    (expires in {ttl // 60} minutes, works once)\n")
+    print(f"    Pairing code:  {code}    (expires in {human_duration(ttl)}, works once)\n")
 
 
 def tool_version(command: list[str]) -> tuple[int, ...] | None:
@@ -218,7 +218,7 @@ def cmd_code(cfg: Config, args) -> int:
     if inside_share(cfg):
         print("tmux-remote-viewer: viewers of this session (and agents reading it) will see this code.",
               file=sys.stderr)
-    body = admin(cfg, "POST", "/pair")
+    body = admin(cfg, "POST", "/pair", {"ttl": args.ttl} if args.ttl else None)
     print_code(cfg, body["code"], body["ttl"])
     return 0
 
@@ -526,7 +526,10 @@ def parser() -> argparse.ArgumentParser:
     share = sub.add_parser("share", help="start or rejoin the shared tmux session")
     share.add_argument("--no-code", action="store_true", help="don't mint a viewer code for a new session")
     share.set_defaults(run=cmd_share)
-    sub.add_parser("code", help="mint a viewer pairing code (and QR code)").set_defaults(run=cmd_code)
+    code = sub.add_parser("code", help="mint a viewer pairing code (and QR code)")
+    code.add_argument("--ttl", type=parse_duration,
+                      help="how long the code works, from 1m to 1h, e.g. 30m (default: code_ttl_seconds, 10m)")
+    code.set_defaults(run=cmd_code)
     sub.add_parser("serve", help="run the gate in the foreground").set_defaults(run=cmd_serve)
     sub.add_parser("doctor", help="check the installation").set_defaults(run=cmd_doctor)
     sub.add_parser("config", help="show the effective configuration").set_defaults(run=cmd_config)
