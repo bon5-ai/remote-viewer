@@ -16,9 +16,15 @@
   <section id="waiting" hidden>
     <p class="rm-muted">An agent is asking for access to your shared terminal. Nothing is granted until you
       approve it in a shell on the machine that runs the gate:</p>
-    <code class="rm-command">tmux-remote-viewer agent approve <span id="command-id"></span></code>
+    <button id="copy-command" class="rm-command rm-copy" type="button">
+      <code>tmux-remote-viewer agent approve <span id="command-id"></span></code>
+      <span class="rm-copy-hint" aria-live="polite">Copy</span>
+    </button>
     <p class="rm-muted">Check that the request ID there matches this one:</p>
-    <span id="request-id" class="rm-request"></span>
+    <button id="copy-id" class="rm-request rm-copy" type="button">
+      <span id="request-id"></span>
+      <span class="rm-copy-hint" aria-live="polite">Copy</span>
+    </button>
     <dl class="rm-facts">
       <dt>Agent</dt><dd id="client"></dd>
       <dt>Returns to</dt><dd id="redirect"></dd>

@@ -12,6 +12,7 @@
   page instead of counting as a wrong guess.
 - `tmux-remote-viewer code --ttl 30m` sets how long one code lasts, from 1 minute to 1 hour,
   without changing `code_ttl_seconds`.
+- On the agent sign-in page, click the approve command or the request ID to copy it.
 
 ## 0.1.0 (2026-10-19)
 

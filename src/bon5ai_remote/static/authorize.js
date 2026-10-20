@@ -18,8 +18,44 @@ function minutes(seconds) {
   return `${m}:${s}`;
 }
 
+// Click the command or the ID to copy it. The clipboard API needs a secure context
+// (https, or http on loopback); elsewhere, fall back to a selected textarea and the
+// older copy command, which a click still allows.
+let requestId = '';
+
+function copyFallback(text) {
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.className = 'rm-offscreen';
+  document.body.append(area);
+  area.select();
+  const copied = document.execCommand('copy');
+  area.remove();
+  return copied;
+}
+
+async function copy(button, text) {
+  let copied;
+  try {
+    await navigator.clipboard.writeText(text);
+    copied = true;
+  } catch {
+    copied = copyFallback(text);
+    button.focus();
+  }
+  const hint = button.querySelector('.rm-copy-hint');
+  hint.textContent = copied ? 'Copied' : "Couldn't copy";
+  clearTimeout(button.resetHint);
+  button.resetHint = setTimeout(() => { hint.textContent = 'Copy'; }, 2000);
+}
+
+$('copy-command').addEventListener('click', event =>
+  copy(event.currentTarget, `tmux-remote-viewer agent approve ${requestId}`));
+$('copy-id').addEventListener('click', event => copy(event.currentTarget, requestId));
+
 function show(request) {
   $('waiting').hidden = false;
+  requestId = request.id;
   $('request-id').textContent = request.id;
   $('command-id').textContent = request.id;
   $('client').textContent = request.verified
