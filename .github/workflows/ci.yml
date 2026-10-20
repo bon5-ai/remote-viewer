@@ -16,7 +16,6 @@ jobs:
           - { os: ubuntu-latest, python: "3.11" }
           - { os: ubuntu-latest, python: "3.12" }
           - { os: ubuntu-latest, python: "3.13" }
-          - { os: macos-latest, python: "3.12" }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10  # the suite takes under a minute; a hang shouldn't run for 6 hours
     steps:
@@ -25,8 +24,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install tmux
-        run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then brew install tmux; else sudo apt-get update && sudo apt-get install -y tmux; fi
+        run: sudo apt-get update && sudo apt-get install -y tmux
       - name: Install
         run: python -m pip install -e '.[test]'
       - name: Test

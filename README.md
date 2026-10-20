@@ -25,8 +25,8 @@ Nobody gets in without the person at the terminal:
 
 ## Requirements
 
-- Linux or macOS. The test suite, real-tmux tests included, runs on both in CI; the macOS
-  launchd service (`install-service`) hasn't been tried on a Mac yet.
+- Linux. CI runs the test suite, real-tmux tests included, on Linux only. The code's macOS
+  paths, the launchd service among them, are still there but nothing tests them.
 - Python 3.11 or later
 - tmux 3.2 or later
 - [asciinema](https://asciinema.org) 3.0 or later, for `asciinema stream`. Many distributions
