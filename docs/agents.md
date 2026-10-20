@@ -95,6 +95,18 @@ public `public_url`, and their callback URL listed in `allowed_redirect_uris`. T
 callback serves every user of that service, so the request ID check at approval is the
 only thing that tells your sign-in apart from a stranger's.
 
+A registration may list callbacks the gate can't allow, such as an app's own URL scheme.
+The gate keeps the loopback and allowlisted ones, drops the rest, and returns the kept
+list in its response. It refuses the registration only when none are left.
+
+**Grok Bot** has no settings form for MCP servers. Ask it in chat: `Add this MCP server:
+https://your-machine.example.com/mcp`. It signs in with OAuth only, so it can't use a token
+from `agent token`. Allow its https callback:
+
+```toml
+allowed_redirect_uris = ["https://www.cursor.com/agents/mcp/oauth/callback"]
+```
+
 ## Managing grants
 
 ```bash

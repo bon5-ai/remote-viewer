@@ -260,6 +260,19 @@ class RegistrationTests(unittest.TestCase):
                     "https://chat.example.test/oauth/callback"):
             self.auth.register({"redirect_uris": [uri]})
 
+    def test_redirects_it_cannot_allow_are_dropped(self):
+        # Grok Bot's registration: an app scheme, an https callback and a loopback one.
+        client = self.auth.register({"redirect_uris": [
+            "cursor://anysphere.cursor-mcp/oauth/callback", "https://chat.example.test/oauth/callback",
+            "http://localhost:8787/callback"]})
+        self.assertEqual(client.redirect_uris,
+                         ("https://chat.example.test/oauth/callback", "http://localhost:8787/callback"))
+        self.assertFalse(self.auth.check_redirect(client, "cursor://anysphere.cursor-mcp/oauth/callback"))
+        self.assertTrue(self.auth.check_redirect(client, "https://chat.example.test/oauth/callback"))
+        with self.assertRaises(OAuthError):  # nothing left to keep
+            self.auth.register({"redirect_uris": ["cursor://anysphere.cursor-mcp/oauth/callback",
+                                                  "https://evil.test/cb"]})
+
     def test_loopback_redirect_may_change_port(self):
         client = self.auth.register({"redirect_uris": ["http://localhost:1000/callback"]})
         self.assertTrue(self.auth.check_redirect(client, "http://localhost:2000/callback"))

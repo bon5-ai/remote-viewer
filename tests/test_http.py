@@ -353,6 +353,16 @@ class AgentFlowTests(ListenerCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "invalid_redirect_uri")
 
+    def test_registration_keeps_only_allowed_redirects(self):
+        response = self.client.post("/remote/register",
+                                    json={"redirect_uris": ["cursor://app/oauth/callback", self.redirect]})
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["redirect_uris"], [self.redirect])
+        response = self.client.get("/remote/authorize?" + urlencode({
+            "response_type": "code", "client_id": response.json()["client_id"],
+            "redirect_uri": "cursor://app/oauth/callback"}))
+        self.assertEqual(response.status_code, 400)  # a dropped redirect is never used
+
     def test_two_sign_ins_in_one_browser_stay_apart(self):
         client_id = self.client.post("/remote/register", json={"redirect_uris": [self.redirect]}).json()["client_id"]
         ids = []

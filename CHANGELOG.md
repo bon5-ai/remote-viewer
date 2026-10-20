@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Dynamic client registration drops redirect URIs it can't allow instead of refusing the
+  whole registration, so Grok Bot (which also lists a `cursor://` callback) can sign in.
+
 ## 0.1.0 (2026-10-19)
 
 First release, spun out of a personal project where it had been the "remote viewer".

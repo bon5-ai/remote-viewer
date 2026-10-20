@@ -269,18 +269,23 @@ class AgentAuth:
         return len(uri) <= MAX_URI_LENGTH and (is_loopback_redirect(uri) or uri in self.allowed_redirect_uris)
 
     def register(self, metadata) -> Client:
-        """Dynamic client registration (RFC 7591), for public clients only."""
+        """Dynamic client registration (RFC 7591), for public clients only.
+
+        Redirect URIs the gate can't allow are dropped rather than failing the registration
+        (RFC 7591 §3.2.1 lets a server replace requested metadata). Some clients list one
+        set for all their apps, Grok Bot's including a cursor:// scheme next to an https and
+        a loopback callback. The response tells the client which ones were kept."""
         if not isinstance(metadata, dict):
             raise OAuthError("invalid_client_metadata", "The body must be a JSON object.")
         uris = metadata.get("redirect_uris")
         if (not isinstance(uris, list) or not 0 < len(uris) <= MAX_REDIRECT_URIS
                 or not all(isinstance(uri, str) for uri in uris)):
             raise OAuthError("invalid_redirect_uri", f"Give 1 to {MAX_REDIRECT_URIS} redirect_uris.")
-        for uri in uris:
-            if not self.redirect_allowed(uri):
-                raise OAuthError("invalid_redirect_uri",
-                                 "Redirect URIs must be http://localhost, http://127.0.0.1 or http://[::1] "
-                                 "(any port), or listed in this server's allowed_redirect_uris.")
+        uris = [uri for uri in uris if self.redirect_allowed(uri)]
+        if not uris:
+            raise OAuthError("invalid_redirect_uri",
+                             "Redirect URIs must be http://localhost, http://127.0.0.1 or http://[::1] "
+                             "(any port), or listed in this server's allowed_redirect_uris.")
         if metadata.get("token_endpoint_auth_method", "none") != "none":
             raise OAuthError("invalid_client_metadata",
                              "Only public clients are supported: token_endpoint_auth_method must be none.")
