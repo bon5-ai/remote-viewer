@@ -7,6 +7,9 @@
 - Interactive prompts (`share`'s "Press Enter", `agent approve`'s scope, pane and
   confirmation) work again. They opened `/dev/tty` in a mode a terminal can't support,
   so they always failed with "This needs an interactive terminal".
+- The pairing code field formats as you type or paste: uppercase, letters and digits
+  only, at most 8, with the dash added after the fourth. A short code is caught in the
+  page instead of counting as a wrong guess.
 
 ## 0.1.0 (2026-10-19)
 

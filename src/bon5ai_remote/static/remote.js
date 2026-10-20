@@ -157,9 +157,36 @@ async function claimFromLink() {
   $('pair-error').textContent = (await claim(code)) ?? '';
 }
 
+// Codes are 8 letters and digits, shown as XXXX-XXXX. Format them as they are typed or
+// pasted: uppercase, nothing else, at most 8, and the dash once a fifth character
+// arrives (adding it after the fourth would fight Backspace).
+const CODE_LENGTH = 8;
+
+function formatCode(text) {
+  const chars = text.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CODE_LENGTH);
+  return chars.length > 4 ? `${chars.slice(0, 4)}-${chars.slice(4)}` : chars;
+}
+
+function reformatCode(event) {
+  if (event.isComposing) return;  // a mobile keyboard's word in progress; compositionend follows
+  const input = $('code');
+  $('pair-error').textContent = '';
+  // Keep the caret after the same character it followed.
+  const caret = formatCode(input.value.slice(0, input.selectionStart)).length;
+  input.value = formatCode(input.value);
+  input.setSelectionRange(caret, caret);
+}
+
+$('code').addEventListener('input', reformatCode);
+$('code').addEventListener('compositionend', reformatCode);
+
 $('pair-form').addEventListener('submit', async event => {
   event.preventDefault();
   $('pair-error').textContent = '';
+  if (formatCode($('code').value).length < CODE_LENGTH + 1) {  // + 1 for the dash
+    $('pair-error').textContent = `Enter all ${CODE_LENGTH} characters.`;
+    return;
+  }
   const error = await claim($('code').value);
   if (error) {
     $('pair-error').textContent = error;

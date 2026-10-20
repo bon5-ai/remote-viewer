@@ -15,8 +15,8 @@
   <p class="rm-muted">Scan the QR code that <code>tmux-remote-viewer share</code> printed in your terminal, or enter its code.</p>
   <form id="pair-form" autocomplete="off">
     <label class="rm-label" for="code">Pairing code</label>
-    <input id="code" name="code" inputmode="text" autocapitalize="characters" spellcheck="false"
-           placeholder="XXXX-XXXX" maxlength="12" required>
+    <input id="code" name="code" inputmode="text" autocapitalize="characters" autocorrect="off" spellcheck="false"
+           placeholder="XXXX-XXXX" required>
     <button class="rm-btn" type="submit">View terminal</button>
   </form>
   <p id="pair-error" class="rm-error" role="alert"></p>
