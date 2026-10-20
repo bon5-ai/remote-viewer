@@ -86,11 +86,12 @@ def inside_share(cfg: Config) -> bool:
 
 def tty_input(prompt: str) -> str:
     """Read an answer from the controlling terminal, not from a pipe."""
+    # Two handles: "r+" would need a seekable file, and a terminal never is.
     try:
-        with open("/dev/tty", "r+") as tty:
-            tty.write(prompt)
-            tty.flush()
-            return tty.readline().strip()
+        with open("/dev/tty", "w") as out, open("/dev/tty") as answer:
+            out.write(prompt)
+            out.flush()
+            return answer.readline().strip()
     except OSError:
         raise Exit("This needs an interactive terminal (or pass --yes with every choice given).") from None
 

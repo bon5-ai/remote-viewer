@@ -4,6 +4,9 @@
 
 - Dynamic client registration drops redirect URIs it can't allow instead of refusing the
   whole registration, so Grok Bot (which also lists a `cursor://` callback) can sign in.
+- Interactive prompts (`share`'s "Press Enter", `agent approve`'s scope, pane and
+  confirmation) work again. They opened `/dev/tty` in a mode a terminal can't support,
+  so they always failed with "This needs an interactive terminal".
 
 ## 0.1.0 (2026-10-19)
 
