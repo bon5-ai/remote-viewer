@@ -4,7 +4,7 @@ import secrets
 import unittest
 from urllib.parse import parse_qs, urlsplit
 
-from bon5ai_remote import agents
+from bon5ai_remote import agents, cimd
 from bon5ai_remote.agents import AgentAuth, OAuthError, s256
 from helpers import Clock
 
@@ -128,6 +128,30 @@ class AgentAuthTests(unittest.TestCase):
         tokens = flow.tokens()
         self.assertIsNone(self.auth.authenticate(tokens["access_token"], "https://elsewhere.test/mcp"))
 
+    def test_resource_comparison_is_canonical(self):
+        for same in ("HTTPS://Term.Example.Test/mcp", "https://term.example.test/mcp/",
+                     "https://term.example.test:443/mcp"):
+            self.assertTrue(agents.same_resource(same, RESOURCE), same)
+        for other in ("https://term.example.test/MCP", "https://term.example.test/mcp#x", "term.example.test/mcp",
+                      "https://term.example.test:8443/mcp", "http://term.example.test/mcp",
+                      "https://u@term.example.test/mcp", "", None):
+            self.assertFalse(agents.same_resource(other, RESOURCE), other)
+        self.assertEqual(agents.canonical_resource("http://[::1]:8095/mcp"), "http://[::1]:8095/mcp")
+
+    def test_token_request_resource_may_differ_only_in_case_and_slash(self):
+        flow = Flow(self.auth)
+        flow.start()
+        flow.approve()
+        tokens = flow.tokens(resource="HTTPS://TERM.EXAMPLE.TEST/mcp/")
+        self.assertIsNotNone(self.auth.authenticate(tokens["access_token"], RESOURCE))
+        refreshed = self.auth.refresh(token=tokens["refresh_token"], client_id=flow.client.id,
+                                      resource="https://Term.Example.Test/mcp")
+        self.assertIn("access_token", refreshed)
+        with self.assertRaises(OAuthError) as caught:
+            self.auth.refresh(token=refreshed["refresh_token"], client_id=flow.client.id,
+                              resource="https://term.example.test/other")
+        self.assertEqual(caught.exception.error, "invalid_target")
+
     def test_refresh_rotates_and_detects_reuse(self):
         flow = Flow(self.auth)
         flow.start()
@@ -195,8 +219,25 @@ class AgentAuthTests(unittest.TestCase):
         flow.start()
         flow.approve()
         tokens = flow.tokens()
-        self.auth.revoke_token(tokens["refresh_token"])
+        self.auth.revoke_token(tokens["refresh_token"], flow.client.id)
         self.assertIsNone(self.auth.authenticate(tokens["access_token"], RESOURCE))
+        self.auth.revoke_token(tokens["refresh_token"], flow.client.id)  # already gone: not an error
+
+    def test_only_the_client_a_token_was_issued_to_can_revoke_it(self):
+        flow = Flow(self.auth)
+        flow.start()
+        flow.approve()
+        tokens = flow.tokens()
+        other = self.auth.register({"redirect_uris": [REDIRECT]})
+        for client_id in (other.id, None):
+            with self.assertRaises(OAuthError) as caught:
+                self.auth.revoke_token(tokens["access_token"], client_id)
+            self.assertEqual(caught.exception.error, "invalid_client")
+        self.assertIsNotNone(self.auth.authenticate(tokens["access_token"], RESOURCE))
+        _, direct = self.auth.mint_direct(scope="observe", pane_id="%1", session_key="$1@100",
+                                          resources=frozenset({RESOURCE}), label="nightly")
+        self.auth.revoke_token(direct, None)  # a token file has no OAuth client; its holder may end it
+        self.assertIsNone(self.auth.authenticate(direct, RESOURCE))
 
     def test_deny_and_expiry_send_the_browser_back_with_an_error(self):
         flow = Flow(self.auth)
@@ -330,18 +371,56 @@ class RegistrationTests(unittest.TestCase):
         auth = AgentAuth(agent_ttl=3600, access_ttl=600, clock=self.clock, fetch_metadata=lambda u: document)
         self.assertIsNone(auth.client(url))  # a document must name itself
 
-    def test_failed_metadata_hosts_are_not_refetched(self):
+    def test_metadata_documents_with_a_client_secret_are_refused(self):
+        url = "https://agent.example.test/oauth/client.json"
+        for extra in ({"client_secret": "s3cret"}, {"client_secret_expires_at": 0}):
+            document = {"client_id": url, "client_name": "Example Agent", "redirect_uris": [REDIRECT], **extra}
+            auth = AgentAuth(agent_ttl=3600, access_ttl=600, clock=self.clock, fetch_metadata=lambda u: document)
+            self.assertIsNone(auth.client(url), extra)
+
+    def test_unreachable_metadata_urls_are_not_refetched_for_a_moment(self):
         calls = []
 
         def fetch(url):
             calls.append(url)
             raise OSError("down")
         auth = AgentAuth(agent_ttl=3600, access_ttl=600, clock=self.clock, fetch_metadata=fetch)
-        for path in ("a", "b", "c"):
-            self.assertIsNone(auth.client(f"https://slow.example.test/{path}.json"))
-        self.assertEqual(len(calls), 1)  # the host is remembered, whatever the path
+        for _ in range(3):
+            self.assertIsNone(auth.client("https://slow.example.test/a.json"))
+        self.assertEqual(len(calls), 1)  # the same URL is remembered
+        auth.client("https://slow.example.test/b.json")
+        self.assertEqual(len(calls), 2)  # but not the whole host
         self.clock.now += agents.METADATA_FAILURE_TTL + 1
-        auth.client("https://slow.example.test/d.json")
+        auth.client("https://slow.example.test/a.json")
+        self.assertEqual(len(calls), 3)
+
+    def test_a_bad_url_cannot_lock_out_its_host(self):
+        good = "https://agent.example.test/oauth/client.json"
+        calls = []
+
+        def fetch(url):
+            calls.append(url)
+            if url != good:
+                raise cimd.MetadataError("client metadata answered 404")
+            return {"client_id": good, "client_name": "Example Agent", "redirect_uris": [REDIRECT]}
+        auth = AgentAuth(agent_ttl=3600, access_ttl=600, clock=self.clock, fetch_metadata=fetch)
+        self.assertIsNone(auth.client("https://agent.example.test/nonexistent"))
+        self.assertIsNotNone(auth.client(good))  # a stranger's 404 on the same host changes nothing
+        self.assertIsNone(auth.client("https://agent.example.test/nonexistent"))
+        self.assertEqual(calls.count("https://agent.example.test/nonexistent"), 2)  # error answers aren't cached
+
+    def test_invalid_documents_are_not_cached(self):
+        url = "https://agent.example.test/oauth/client.json"
+        document = {"client_id": "https://someone-else.test/client.json", "redirect_uris": [REDIRECT]}
+        calls = []
+
+        def fetch(u):
+            calls.append(u)
+            return dict(document)
+        auth = AgentAuth(agent_ttl=3600, access_ttl=600, clock=self.clock, fetch_metadata=fetch)
+        self.assertIsNone(auth.client(url))
+        document["client_id"] = url  # the client fixes its document
+        self.assertIsNotNone(auth.client(url))
         self.assertEqual(len(calls), 2)
 
     def test_unknown_clients(self):

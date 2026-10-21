@@ -35,8 +35,9 @@
 | DNS rebinding against a local listener | Every request's Host header must be the public host, a loopback address on that port, or an explicit `allowed_hosts` entry. `/mcp` and `/ws` also check `Origin`. |
 | Bypassing the proxy (reaching the Funnel origin directly) | `proxy_header` plus a secret. Requests without it get a 404. With the header configured and no secret available, the gate refuses to start. |
 | Abuse of unauthenticated endpoints | Registrations are capped at 100. When the cap is full, the least recently used registration that has no grant or sign-in in progress is forgotten, so a flood can neither fill the table nor lock registration. Unused registrations are forgotten after a week. Pending sign-ins are capped at 10 (3 per client). Request bodies are capped, and client names are cleaned of control and bidi characters, as are tmux's pane and window names. |
-| SSRF through Client ID Metadata Documents | https only. Every resolved address must be public, including any IPv4 address embedded in an IPv6 one (mapped, 6to4, Teredo, NAT64). The connection is pinned to the checked address. No redirects, a 64 KB cap, and a single 5 s deadline for the whole fetch, enforced by a watchdog. |
-| Starving the gate with slow metadata servers | Metadata fetches run in their own pool of 4 threads, separate from the requests the gate serves. A host that fails isn't fetched again for a minute. |
+| SSRF through Client ID Metadata Documents | https only, with a real path and no `.` or `..` segments. Every resolved address must be public, including any IPv4 address embedded in an IPv6 one (mapped, 6to4, Teredo, NAT64). The connection is pinned to the checked address. No redirects, a 64 KB cap, and a single 5 s deadline for the whole fetch, enforced by a watchdog. A document that carries a client secret is refused. |
+| Starving the gate with slow metadata servers | Metadata fetches run in their own pool of 4 threads, separate from the requests the gate serves. A URL that does not answer isn't fetched again for a minute. Error responses and invalid documents are not cached, so one bad URL cannot block the rest of its host. |
+| Someone else revoking a token | `/revoke` ends a grant only when `client_id` is the client the token was issued to. An unknown token gets an empty 200. A token from `agent token` has no OAuth client, so whoever holds it can end it. |
 | Clickjacking, script injection | A strict CSP with `frame-ancestors 'none'`. The sign-in page has no inline script and renders values with `textContent`. |
 | Not noticing | The status line shows viewers, agents and pending sign-ins. `prefix + X` revokes every agent. An append-only 0600 audit log records approvals, revocations and every write with its text. |
 
@@ -69,6 +70,8 @@
   your AWS account can read the origin secret.
 - **Hosted OAuth clients.** A web chat's shared callback in `allowed_redirect_uris` means
   any user of that service can start a sign-in. The request ID check is the only defence.
+- **Plain HTTP on loopback.** Reached as `127.0.0.1`, `localhost` or `[::1]`, the issuer
+  and its endpoints are `http://`. Anywhere else, `public_url` has to be https.
 
 ## Reporting a vulnerability
 

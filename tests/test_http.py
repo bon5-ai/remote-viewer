@@ -214,6 +214,7 @@ class AgentFlowTests(ListenerCase):
         challenge = response.headers["www-authenticate"]
         metadata_url = challenge.split('resource_metadata="', 1)[1].split('"', 1)[0]
         self.assertEqual(metadata_url, PUBLIC + ".well-known/oauth-protected-resource/mcp")
+        self.assertIn('scope="observe"', challenge)
         resource = self.client.get(urlsplit(metadata_url).path).json()
         self.assertEqual(resource["resource"], PUBLIC + "mcp")
         issuer = resource["authorization_servers"][0]
@@ -224,7 +225,7 @@ class AgentFlowTests(ListenerCase):
         self.assertEqual(server["code_challenge_methods_supported"], ["S256"])
         return server
 
-    def sign_in(self, scope="control", pane="%1") -> dict:
+    def sign_in(self, scope="control", pane="%1", resource=PUBLIC + "mcp") -> dict:
         server = self.discover()
         registration = self.client.post(urlsplit(server["registration_endpoint"]).path, json={
             "redirect_uris": [self.redirect], "client_name": "Test Agent",
@@ -234,7 +235,7 @@ class AgentFlowTests(ListenerCase):
         verifier = secrets.token_urlsafe(48)
         query = urlencode({"response_type": "code", "client_id": client_id, "redirect_uri": self.redirect,
                            "code_challenge": s256(verifier), "code_challenge_method": "S256", "state": "st8",
-                           "resource": PUBLIC + "mcp", "scope": "control"})
+                           "resource": resource, "scope": "control"})
         started = self.client.get(urlsplit(server["authorization_endpoint"]).path + "?" + query,
                                   follow_redirects=False)
         self.assertEqual(started.status_code, 303)
@@ -256,7 +257,7 @@ class AgentFlowTests(ListenerCase):
         self.assertEqual(params["iss"], [PUBLIC.rstrip("/")])
         tokens = self.client.post(urlsplit(server["token_endpoint"]).path, data={
             "grant_type": "authorization_code", "code": params["code"][0], "client_id": client_id,
-            "redirect_uri": self.redirect, "code_verifier": verifier, "resource": PUBLIC + "mcp"})
+            "redirect_uri": self.redirect, "code_verifier": verifier, "resource": resource})
         self.assertEqual(tokens.status_code, 200, tokens.text)
         self.assertEqual(tokens.headers["cache-control"], "no-store")
         return {**tokens.json(), "client_id": client_id, "server": server}
@@ -308,7 +309,11 @@ class AgentFlowTests(ListenerCase):
     def test_revoked_or_ended_grants_get_401(self):
         tokens = self.sign_in()
         self.state.agents.revoke(None, reason="test")
-        self.assertEqual(self.mcp(tokens["access_token"], "tools/list").status_code, 401)
+        response = self.mcp(tokens["access_token"], "tools/list")
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers["www-authenticate"],
+                         f'Bearer resource_metadata="{PUBLIC}.well-known/oauth-protected-resource/mcp", '
+                         'scope="observe", error="invalid_token"')
         tokens = self.sign_in()
         self.tmux.session = "$9@999"  # the shared session was restarted
         self.assertEqual(self.mcp(tokens["access_token"], "tools/list").status_code, 401)
@@ -320,6 +325,18 @@ class AgentFlowTests(ListenerCase):
                                     headers={**MCP_HEADERS, "Authorization": f"Bearer {tokens['access_token']}",
                                              "host": "127.0.0.1:8095"})
         self.assertEqual(response.status_code, 401)
+
+    def test_resource_is_compared_without_case_or_trailing_slash(self):
+        tokens = self.sign_in(resource="HTTPS://Term.Example.Test/remote/mcp/")
+        self.assertEqual(self.mcp(tokens["access_token"], "tools/list").status_code, 200)
+        client_id = self.client.post("/remote/register", json={"redirect_uris": [self.redirect]}).json()["client_id"]
+        for wrong in ("https://term.example.test/REMOTE/mcp", "https://term.example.test/remote/mcp#x"):
+            response = self.client.get("/remote/authorize?" + urlencode({
+                "response_type": "code", "client_id": client_id, "redirect_uri": self.redirect,
+                "code_challenge": s256(secrets.token_urlsafe(48)), "code_challenge_method": "S256",
+                "resource": wrong}), follow_redirects=False)
+            self.assertEqual(response.status_code, 302, wrong)
+            self.assertIn("error=invalid_target", response.headers["location"])
 
     def test_foreign_origin_is_refused(self):
         tokens = self.sign_in()
@@ -334,6 +351,19 @@ class AgentFlowTests(ListenerCase):
         self.assertEqual(refreshed.status_code, 200)
         self.assertEqual(self.mcp(refreshed.json()["access_token"], "tools/list").status_code, 200)
 
+    def test_revocation_over_http_checks_the_client(self):
+        tokens = self.sign_in()
+        path = urlsplit(tokens["server"]["revocation_endpoint"]).path
+        refused = self.client.post(path, data={"token": tokens["access_token"], "client_id": "client-other"})
+        self.assertEqual(refused.status_code, 400)
+        self.assertEqual(refused.json()["error"], "invalid_client")
+        self.assertEqual(self.mcp(tokens["access_token"], "tools/list").status_code, 200)
+        unknown = self.client.post(path, data={"token": "nope", "client_id": tokens["client_id"]})
+        self.assertEqual(unknown.status_code, 200)
+        done = self.client.post(path, data={"token": tokens["access_token"], "client_id": tokens["client_id"]})
+        self.assertEqual(done.status_code, 200)
+        self.assertEqual(self.mcp(tokens["access_token"], "tools/list").status_code, 401)
+
     def test_authorize_refuses_unknown_clients_and_redirects(self):
         response = self.client.get("/remote/authorize?" + urlencode({
             "response_type": "code", "client_id": "client-nope", "redirect_uri": self.redirect}))
@@ -347,6 +377,22 @@ class AgentFlowTests(ListenerCase):
             "code_challenge_method": "plain", "code_challenge": "x" * 43}), follow_redirects=False)
         self.assertEqual(response.status_code, 302)
         self.assertIn("error=invalid_request", response.headers["location"])
+
+    def test_authorize_refuses_repeated_parameters(self):
+        client_id = self.client.post("/remote/register", json={"redirect_uris": [self.redirect]}).json()["client_id"]
+        params = [("response_type", "code"), ("client_id", client_id), ("redirect_uri", self.redirect),
+                  ("code_challenge", s256(secrets.token_urlsafe(48))), ("code_challenge_method", "S256")]
+        for key, value in (("redirect_uri", "http://localhost:1/other"), ("client_id", client_id)):
+            response = self.client.get("/remote/authorize?" + urlencode(params + [(key, value)]),
+                                       follow_redirects=False)
+            self.assertEqual(response.status_code, 400, key)  # never redirected anywhere
+        for key, value in (("code_challenge", s256(secrets.token_urlsafe(48))), ("resource", PUBLIC + "mcp"),
+                           ("state", "two")):
+            response = self.client.get("/remote/authorize?" + urlencode(params + [(key, value), (key, value)]),
+                                       follow_redirects=False)
+            self.assertEqual(response.status_code, 302, key)
+            self.assertIn("error=invalid_request", response.headers["location"])
+        self.assertEqual(self.state.agents.pending(), [])
 
     def test_registration_refuses_remote_redirects(self):
         response = self.client.post("/remote/register", json={"redirect_uris": ["https://evil.test/cb"]})

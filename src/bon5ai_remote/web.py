@@ -32,7 +32,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed, InvalidHandshake, InvalidURI
 
-from .agents import PENDING_LINGER, PENDING_TTL, REQUEST_ID, SCOPES, Busy, OAuthError, with_params
+from .agents import PENDING_LINGER, PENDING_TTL, REQUEST_ID, SCOPES, Busy, OAuthError, same_resource, with_params
 from .config import Listener
 from .gate import FONT_NAME, PLAYER_ASSETS, InvalidCode, Throttled
 from .state import State
@@ -46,6 +46,8 @@ MAX_FORM_BYTES = 8192
 METADATA_FETCHES = 4  # client metadata fetches at once, in their own threads (not the shared pool)
 REVALIDATE_SECONDS = 30
 SERVER_NAME = "BON5AI Remote Viewer"
+AUTHORIZE_PARAMS = ("client_id", "redirect_uri", "response_type", "code_challenge", "code_challenge_method",
+                    "state", "resource", "scope")
 
 # The player compiles its terminal emulator from WebAssembly and sets inline
 # styles, hence 'wasm-unsafe-eval' and the style 'unsafe-inline'. No inline script.
@@ -416,6 +418,10 @@ def oauth_routes(state: State, listener: Listener, static) -> list:
 
     async def authorize(request: Request) -> Response:
         query = request.query_params
+        # RFC 6749 3.1: "Request and response parameters MUST NOT be included more than once."
+        repeated = [key for key in AUTHORIZE_PARAMS if len(query.getlist(key)) > 1]
+        if "client_id" in repeated or "redirect_uri" in repeated:
+            return refuse_page(f"{repeated[0]} was given more than once.")  # no trusted address to send it to
         client = await lookup_client(query.get("client_id", ""))
         if client is None:
             return refuse_page("Unknown client. Remove the MCP server from your agent and add it again.")
@@ -431,13 +437,16 @@ def oauth_routes(state: State, listener: Listener, static) -> list:
             return RedirectResponse(with_params(redirect_uri, {"error": error, "error_description": description,
                                                                "state": state_param, "iss": issuer(request)}), 302)
 
+        if repeated:
+            return back("invalid_request", f"{repeated[0]} was given more than once.")
         if query.get("response_type") != "code":
             return back("unsupported_response_type", "Only the authorization code flow is supported.")
         if query.get("code_challenge_method") != "S256":
             return back("invalid_request", "PKCE with code_challenge_method=S256 is required.")
-        resource = query.get("resource") or base(request) + "mcp"
-        if resource != base(request) + "mcp":
-            return back("invalid_target", f"This server's resource is {base(request)}mcp.")
+        resource = base(request) + "mcp"  # the grant is always bound to this server's own form
+        requested = query.get("resource")
+        if requested and not same_resource(requested, resource):
+            return back("invalid_target", f"This server's resource is {resource}.")
         try:
             pending, secret = agents.start(client=client, redirect_uri=redirect_uri,
                                            challenge=query.get("code_challenge", ""), state=state_param,
@@ -520,9 +529,11 @@ def oauth_routes(state: State, listener: Listener, static) -> list:
         body = await read_body(request, MAX_FORM_BYTES) or b""
         try:
             form = parse_qs(body.decode("utf-8"), max_num_fields=20)
-            agents.revoke_token(form_value(form, "token"))
-        except (UnicodeDecodeError, ValueError, OAuthError):
+            agents.revoke_token(form_value(form, "token"), form_value(form, "client_id") or None)
+        except (UnicodeDecodeError, ValueError):
             pass
+        except OAuthError as error:
+            return respond_json({"error": error.error, "error_description": error.description}, 400)
         return respond_json({})
 
     mount = listener.mount
@@ -555,7 +566,8 @@ class McpEndpoint:
         origin = request.headers.get("origin")
         if origin is not None and origin not in allowed_origins(scope):
             return await respond("Forbidden origin\n", 403)(scope, receive, send)
-        challenge = f'Bearer resource_metadata="{base}.well-known/oauth-protected-resource/mcp"'
+        # scope names the least a sign-in needs (RFC 6750 3); the person still picks the grant's scope.
+        challenge = f'Bearer resource_metadata="{base}.well-known/oauth-protected-resource/mcp", scope="{SCOPES[0]}"'
         scheme, _, token = request.headers.get("authorization", "").partition(" ")
         if scheme.lower() != "bearer" or not token.strip():
             return await respond_json({"error": "invalid_token", "error_description": "Sign in first."}, 401,

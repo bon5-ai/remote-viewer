@@ -22,7 +22,7 @@ import json
 import socket
 import ssl
 import threading
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 MAX_BYTES = 64 * 1024
 DEADLINE = 5.0
@@ -31,6 +31,13 @@ NAT64 = (ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::
 
 class MetadataError(Exception):
     pass
+
+
+class TransportError(MetadataError):
+    """No answer at all (no DNS, no connection, a timeout), as opposed to an answer that was refused.
+
+    Only these may be remembered for a moment: CIMD says an authorization server "MUST NOT
+    cache error responses" nor "documents which are invalid or malformed"."""
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
@@ -73,10 +80,10 @@ def _global_address(host: str, port: int, resolve) -> str:
     try:
         infos = resolve(host, port, type=socket.SOCK_STREAM)
     except OSError as error:
-        raise MetadataError(f"cannot resolve {host}") from error
+        raise TransportError(f"cannot resolve {host}") from error
     addresses = [info[4][0] for info in infos]
     if not addresses:
-        raise MetadataError(f"cannot resolve {host}")
+        raise TransportError(f"cannot resolve {host}")
     for address in addresses:
         if not is_public(ipaddress.ip_address(address.split("%", 1)[0])):
             raise MetadataError(f"{host} resolves to a non-public address")
@@ -91,6 +98,8 @@ def check_url(url: str) -> tuple[str, int, str]:
         raise MetadataError("a client_id URL must not carry credentials or a fragment")
     if not parts.path or parts.path == "/":
         raise MetadataError("a client_id URL must have a path")
+    if any(unquote(segment) in (".", "..") for segment in parts.path.split("/")):
+        raise MetadataError("a client_id URL must not contain . or .. path segments")
     try:
         port = parts.port or 443
     except ValueError as error:
@@ -117,12 +126,12 @@ def fetch(url: str, *, resolve=socket.getaddrinfo, context: ssl.SSLContext | Non
             raise MetadataError("client metadata is not JSON")
         body = response.read(MAX_BYTES + 1)
     except (OSError, ValueError, http.client.HTTPException) as error:
-        raise MetadataError(f"cannot fetch client metadata: {error}") from error
+        raise TransportError(f"cannot fetch client metadata: {error}") from error
     finally:
         watchdog.cancel()
         conn.close()
     if expired.is_set():  # a read cut short by the watchdog can look like a clean end of file
-        raise MetadataError("client metadata took too long")
+        raise TransportError("client metadata took too long")
     if len(body) > MAX_BYTES:
         raise MetadataError("client metadata is too large")
     try:

@@ -29,6 +29,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from urllib.parse import urlencode, urlsplit
 
+from .cimd import TransportError
 from .gate import CODE_ALPHABET, digest, new_code, normalize_code
 
 SCOPES = ("observe", "suggest", "control")
@@ -50,7 +51,7 @@ CLIENT_IDLE_TTL = 7 * 86400  # a registration nobody has used for a week is forg
 MAX_TOKENS_PER_GRANT = 5  # live access tokens, and refresh tokens kept for reuse detection
 MAX_METADATA_CACHE = 50
 METADATA_CACHE_TTL = 600
-METADATA_FAILURE_TTL = 60  # a host that failed isn't fetched again for this long
+METADATA_FAILURE_TTL = 60  # a client_id URL that could not be reached isn't fetched again for this long
 MAX_REDIRECT_URIS = 5
 MAX_URI_LENGTH = 512
 MAX_NAME_LENGTH = 64
@@ -110,6 +111,33 @@ def redirect_matches(registered: str, requested: str) -> bool:
         return False
     a, b = urlsplit(registered), urlsplit(requested)
     return a.hostname == b.hostname and (a.path or "/") == (b.path or "/") and a.query == b.query
+
+
+def canonical_resource(uri) -> str | None:
+    """A resource indicator in the form compared against this server's own (RFC 8707 2, MCP
+    "Canonical Server URI"): lowercase scheme and host, no default port, no trailing slash.
+    The path keeps its case. None for anything that is not an absolute http(s) URI without
+    a fragment or credentials."""
+    if not isinstance(uri, str):
+        return None
+    try:
+        parts = urlsplit(uri)
+        port = parts.port
+    except ValueError:
+        return None
+    scheme = parts.scheme.lower()
+    if (scheme not in ("http", "https") or not parts.hostname or parts.username is not None
+            or parts.password is not None or parts.fragment or "#" in uri):
+        return None
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname  # urlsplit lowercases it
+    if port is not None and port != {"http": 80, "https": 443}[scheme]:
+        host += f":{port}"
+    return f"{scheme}://{host}{parts.path.rstrip('/')}" + (f"?{parts.query}" if parts.query else "")
+
+
+def same_resource(a, b) -> bool:
+    canonical = canonical_resource(a)
+    return canonical is not None and canonical == canonical_resource(b)
 
 
 def with_params(uri: str, params: dict) -> str:
@@ -329,28 +357,32 @@ class AgentAuth:
                 return client
         if self.fetch_metadata is None:
             return None
-        host = urlsplit(client_id).hostname or ""
         with self._lock:
             cached = self._metadata.get(client_id)
-            failed_until = self._metadata_failures.get(host, 0)
+            failed_until = self._metadata_failures.get(client_id, 0)
         if cached and cached[1] > now:
             return cached[0]
         if failed_until > now:
             return None
         try:
             document = self.fetch_metadata(client_id)
-        except Exception:  # noqa: BLE001 - any failure to fetch means "no such client"
-            document = None
-        client = self._client_from_document(client_id, document, now) if document is not None else None
-        if client is None:
+        except (TransportError, OSError):
+            # Nothing answered. Remember this one URL briefly, so a dead or slow address can't
+            # tie up the fetch threads; other URLs on the same host are unaffected.
             with self._lock:
-                self._metadata_failures[host] = now + METADATA_FAILURE_TTL
+                if len(self._metadata_failures) >= MAX_METADATA_CACHE:
+                    self._metadata_failures.pop(next(iter(self._metadata_failures)))
+                self._metadata_failures[client_id] = now + METADATA_FAILURE_TTL
             return None
-        if client is not None:
-            with self._lock:
-                if len(self._metadata) >= MAX_METADATA_CACHE:
-                    self._metadata.pop(next(iter(self._metadata)))
-                self._metadata[client_id] = (client, now + METADATA_CACHE_TTL)
+        except Exception:  # noqa: BLE001 - an error answer or a bad document: refuse, and never cache it
+            return None
+        client = self._client_from_document(client_id, document, now)
+        if client is None:
+            return None  # invalid or malformed documents are not cached either
+        with self._lock:
+            if len(self._metadata) >= MAX_METADATA_CACHE:
+                self._metadata.pop(next(iter(self._metadata)))
+            self._metadata[client_id] = (client, now + METADATA_CACHE_TTL)
         return client
 
     def _client_from_document(self, client_id: str, document, now: float) -> Client | None:
@@ -358,6 +390,8 @@ class AgentAuth:
             return None
         if document.get("token_endpoint_auth_method", "none") != "none":
             return None
+        if "client_secret" in document or "client_secret_expires_at" in document:
+            return None  # CIMD 4.1: these properties MUST NOT be used; there is no secret to share
         uris = document.get("redirect_uris")
         if not isinstance(uris, list) or not all(isinstance(uri, str) for uri in uris):
             return None
@@ -512,7 +546,7 @@ class AgentAuth:
                     raise OAuthError("invalid_grant", "The code was issued to another client or redirect URI.")
                 if not VERIFIER.fullmatch(verifier or "") or not hmac.compare_digest(s256(verifier), entry.challenge):
                     raise OAuthError("invalid_grant", "PKCE verification failed.")
-                if resource and resource != entry.resource:
+                if resource and not same_resource(resource, entry.resource):
                     raise OAuthError("invalid_target", "The resource does not match the authorization request.")
                 grant = self._grants.get(entry.grant_id)
                 if not self._usable(grant, now):
@@ -535,7 +569,7 @@ class AgentAuth:
                 grant = self._grants.get(entry.grant_id)
                 if not self._usable(grant, now) or grant.client_id != client_id:
                     raise OAuthError("invalid_grant", "The refresh token does not belong to this client.")
-                if resource and resource not in grant.resources:
+                if resource and not any(same_resource(resource, own) for own in grant.resources):
                     raise OAuthError("invalid_target", "The resource does not match this grant.")
                 if entry.rotated_at is not None:
                     if now - entry.rotated_at <= REFRESH_GRACE and entry.successor is not None:
@@ -586,13 +620,20 @@ class AgentAuth:
             grant.last_used = now
             return grant
 
-    def revoke_token(self, token: str) -> None:
-        """RFC 7009: revoking either token of a grant ends the grant."""
+    def revoke_token(self, token: str, client_id: str | None) -> None:
+        """RFC 7009: revoking either token of a grant ends the grant.
+
+        An unknown token is not an error (RFC 7009 2.2). A known one is revoked only for the
+        client it was issued to (2.1); a token minted with ``agent token`` has no OAuth
+        client, so whoever holds it may end it."""
         key = digest(token or "")
         with self._lock:
             grant_id = (self._access.get(key) or (None,))[0]
             if grant_id is None and key in self._refresh:
                 grant_id = self._refresh[key].grant_id
+            owner = self._grants[grant_id].client_id if grant_id in self._grants else None
+            if owner is not None and owner != "direct" and client_id != owner:
+                raise OAuthError("invalid_client", "The token was not issued to this client.")
             grant = self._drop_grant(grant_id) if grant_id else None
         if grant is not None:
             self.on_event("revoked", grant=grant.id, client=grant.client_name, reason="revoked by client")
@@ -637,5 +678,6 @@ class AgentAuth:
             return True
 
 
-__all__ = ["AgentAuth", "Busy", "CODE_ALPHABET", "Client", "Grant", "GRANT_ID", "NotFound", "OAuthError", "REQUEST_ID",
-           "SCOPES", "SCOPE_HELP", "SCOPE_RANK", "clean_name", "is_loopback_redirect", "redirect_matches", "s256"]
+__all__ = ["AgentAuth", "Busy", "CODE_ALPHABET", "Client", "Grant", "GRANT_ID", "NotFound", "OAuthError",
+           "REQUEST_ID", "SCOPES", "SCOPE_HELP", "SCOPE_RANK", "canonical_resource", "clean_name",
+           "is_loopback_redirect", "redirect_matches", "s256", "same_resource"]

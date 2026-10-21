@@ -55,9 +55,12 @@ class MetadataFetchTests(unittest.TestCase):
 
     def test_url_rules(self):
         for url in ("http://agent.example.test/c.json", "https://agent.example.test/", "https://u:p@x.test/c",
-                    "https://x.test/c#frag", "https:///c"):
+                    "https://x.test/c#frag", "https:///c", "https://x.test/./c.json", "https://x.test/a/../c.json",
+                    "https://x.test/a/..", "https://x.test/%2e%2E/c.json", "https://x.test/%2E/c.json"):
             with self.assertRaises(cimd.MetadataError, msg=url):
                 cimd.check_url(url)
+        for url in ("https://x.test/c.json", "https://x.test/a/.well-known/c", "https://x.test/a..b/c.json"):
+            self.assertEqual(cimd.check_url(url)[0], "x.test", url)
 
     def test_private_addresses_are_refused(self):
         for address in ("127.0.0.1", "10.0.0.5", "169.254.169.254", "::1", "fd00::1", "100.100.100.100"):
@@ -106,6 +109,14 @@ class MetadataFetchTests(unittest.TestCase):
         self.assertEqual(document, {"client_id": "x"})
         self.assertEqual(seen, {"host": "agent.example.test", "address": "93.184.215.14", "port": 443,
                                 "target": "/oauth/client.json"})
+
+    def test_only_unanswered_fetches_are_transport_errors(self):
+        with self.assertRaises(cimd.TransportError):
+            cimd.fetch(self.URL, resolve=resolver(), connection_class=connection(FakeResponse(), {}))
+        for response in (FakeResponse(status=404), FakeResponse(body=b"not json")):
+            with self.assertRaises(cimd.MetadataError) as caught:
+                cimd.fetch(self.URL, resolve=resolver("93.184.215.14"), connection_class=connection(response, {}))
+            self.assertNotIsInstance(caught.exception, cimd.TransportError)
 
     def test_response_rules(self):
         for response in (FakeResponse(status=302), FakeResponse(content_type="text/html"),

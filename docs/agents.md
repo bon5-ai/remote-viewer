@@ -15,7 +15,9 @@ The person picks the scope at approval. The agent's request has no say in it.
 | `suggest` | also type one line at a shell prompt, **without pressing Enter** or Tab. You decide whether it runs | + `send_text` |
 | `control` | also press keys, submit text and run commands | + `send_keys`, `run_command` |
 
-An agent only sees the tools its scope allows.
+An agent only sees the tools its scope allows. Calling one outside that scope returns a
+tool error (`needs_scope`), not an HTTP 403. A 403 would make a compliant client open a
+new sign-in, and another approval, for a tool it was never offered.
 
 Each grant is pinned to **one pane**, chosen at approval. It stops working when any of
 these happens:
