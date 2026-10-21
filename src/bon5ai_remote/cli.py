@@ -49,8 +49,14 @@ class Exit(Exception):
 
 # ---- helpers ------------------------------------------------------------------------------
 def self_command(cfg_arg: str | None) -> list[str]:
-    """How to run this CLI again from tmux or a service: an absolute path, not $PATH."""
-    command = [sys.executable, "-m", "bon5ai_remote"]
+    """How to run this CLI again from tmux or a service: an absolute path, not $PATH.
+
+    ``-P`` keeps the working directory off ``sys.path``. Without it, ``python -m`` would
+    import a ``bon5ai_remote`` package (or a ``json.py``) planted in whatever directory the
+    command happens to run from: Claude Code runs the headersHelper in the project it has
+    open, and the kill key runs in the shared session's directory.
+    """
+    command = [sys.executable, "-P", "-m", "bon5ai_remote"]
     return command + (["--config", str(Path(cfg_arg).expanduser().resolve())] if cfg_arg else [])
 
 
@@ -166,7 +172,7 @@ def ensure_stream(cfg: Config, tmux: Tmux) -> None:
     log_path = cfg.state_dir / "stream.log"
     with open(log_path, "ab") as log_file:
         # A new session, so the stream outlives this SSH connection, as the tmux session does.
-        subprocess.Popen([sys.executable, "-m", "bon5ai_remote.stream", "--socket", str(cfg.tmux_socket),
+        subprocess.Popen([sys.executable, "-P", "-m", "bon5ai_remote.stream", "--socket", str(cfg.tmux_socket),
                           "--session", cfg.session, "--listen", listen],
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log_file,
                          start_new_session=True, close_fds=True)

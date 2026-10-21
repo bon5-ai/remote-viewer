@@ -4,9 +4,12 @@ import os
 import pty
 import select
 import signal
+import subprocess
 import sys
+import tempfile
 import time
 import unittest
+from pathlib import Path
 
 from bon5ai_remote import cli
 
@@ -65,6 +68,28 @@ class ArgumentTests(unittest.TestCase):
     def test_code_ttl(self):
         self.assertEqual(cli.parser().parse_args(["code", "--ttl", "30m"]).ttl, 1800)
         self.assertIsNone(cli.parser().parse_args(["code"]).ttl)  # the gate's code_ttl_seconds
+
+
+class SelfCommandTests(unittest.TestCase):
+    """The re-invocation command (headersHelper, kill key, service) must not import from
+    the directory it runs in: a cloned repository could plant a package there."""
+
+    def test_a_planted_package_in_the_working_directory_is_ignored(self):
+        with tempfile.TemporaryDirectory() as cwd:
+            planted = Path(cwd) / "bon5ai_remote"
+            planted.mkdir()
+            (planted / "__init__.py").write_text("")
+            (planted / "__main__.py").write_text("import sys; print('PLANTED'); sys.exit(99)\n")
+            result = subprocess.run(cli.self_command(None) + ["--help"], cwd=cwd,
+                                    capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("PLANTED", result.stdout)
+        self.assertIn("tmux-remote-viewer", result.stdout)
+
+    def test_config_path_is_absolute(self):
+        command = cli.self_command("~/x/config.toml")
+        self.assertEqual(command[-2], "--config")
+        self.assertTrue(Path(command[-1]).is_absolute())
 
 
 if __name__ == "__main__":

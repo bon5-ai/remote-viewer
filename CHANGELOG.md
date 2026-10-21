@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Security.** The commands the gate writes for tmux, the service and Claude Code's
+  `headersHelper` run Python with `-P`, so a `bon5ai_remote` package planted in the
+  working directory (a cloned repository, say) can no longer be imported in place of the
+  installed one. Re-run `agent token` and `install-service` to regenerate them.
 - OAuth and MCP authorization follow the client-metadata and token rules more closely.
   A metadata URL that does not answer is remembered on its own, for a minute; an error
   response or an invalid document is not cached, so one bad URL cannot lock out every
