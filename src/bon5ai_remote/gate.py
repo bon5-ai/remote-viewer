@@ -26,11 +26,15 @@ from collections import deque
 
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L
 CODE_LENGTH = 8
-# Per client when a trusted proxy names the client, else one shared bucket: behind
-# Funnel every request comes from 127.0.0.1. The global ceiling still bounds an
-# attacker who rotates addresses.
+# Wrong codes are counted per client when a trusted proxy names the client, else in one
+# shared bucket: behind Funnel every request comes from 127.0.0.1. A named client is
+# locked out after FAILURE_LIMIT wrong codes in the window. The shared bucket never
+# locks anyone out: that would let anyone keep the owner from pairing with ten requests
+# every ten minutes. The listener slows every wrong answer down instead (web.FAILURE_DELAY,
+# with a cap on how many may wait at once), which bounds guessing at a rate the 40-bit
+# code space laughs at, and the terminal is told once the window holds FAILURE_LIMIT
+# wrong codes from anywhere, so guessing is noticed.
 FAILURE_LIMIT = 10
-GLOBAL_FAILURE_LIMIT = 100
 FAILURE_WINDOW_SECONDS = 600
 MAX_STREAMS = 4
 
@@ -120,14 +124,14 @@ def symbol_fonts(index: str) -> tuple[str, dict[str, str]]:
 
 class Gate:
     def __init__(self, *, code_ttl: int, viewer_ttl: int, session_lookup, host_attached, stream_address,
-                 on_viewers=lambda session, count: None, on_lockout=lambda: None, clock=time.time):
+                 on_viewers=lambda session, count: None, on_guessing=lambda failures: None, clock=time.time):
         self.code_ttl = code_ttl
         self.viewer_ttl = viewer_ttl
         self.session_lookup = session_lookup
         self.host_attached = host_attached
         self.stream_address = stream_address
         self.on_viewers = on_viewers
-        self.on_lockout = on_lockout
+        self.on_guessing = on_guessing
         self.clock = clock
         self._lock = threading.Lock()
         self._codes: dict[str, tuple[str, float]] = {}
@@ -163,27 +167,31 @@ class Gate:
         return f"{code[:4]}-{code[4:]}"
 
     def claim(self, typed: str, client: str = "") -> str:
-        """Trade a code for a viewer token. Codes work once."""
+        """Trade a code for a viewer token. Codes work once.
+
+        `client` is the address a trusted proxy reported, or "" when clients can't be told
+        apart. Only a named client is ever locked out (Throttled); see FAILURE_LIMIT."""
         code = normalize_code(typed)
         now = self.clock()
-        locked_out = False
+        noticed = False
         with self._lock:
             self._prune(now)
-            window = self._failures.setdefault(client, deque())
-            if len(window) >= FAILURE_LIMIT or len(self._all_failures) >= GLOBAL_FAILURE_LIMIT:
+            window = self._failures.setdefault(client, deque()) if client else None
+            if window is not None and len(window) >= FAILURE_LIMIT:
                 raise Throttled()
             entry = self._codes.pop(digest(code), None)
             if entry is None:
-                window.append(now)
+                if window is not None:
+                    window.append(now)
                 self._all_failures.append(now)
-                locked_out = len(self._all_failures) == GLOBAL_FAILURE_LIMIT
-                failures = len(window)
+                noticed = len(self._all_failures) == FAILURE_LIMIT  # once per window
+                failures = len(window) if window is not None else len(self._all_failures)
             else:
                 token = secrets.token_urlsafe(32)
                 self._viewers[digest(token)] = (entry[0], now + self.viewer_ttl)
         if entry is None:
-            if locked_out:
-                self.on_lockout()
+            if noticed:
+                self.on_guessing(FAILURE_LIMIT)
             raise InvalidCode(failures)
         return token
 

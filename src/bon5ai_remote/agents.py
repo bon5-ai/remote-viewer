@@ -86,11 +86,15 @@ def s256(verifier: str) -> str:
 
 
 def clean_name(value) -> str:
-    """A display name with no control, format (bidi, zero-width) or odd space characters."""
+    """A display name with no control, format (bidi, zero-width) or odd space characters.
+
+    A name that talks about verification is dropped too: "Claude (verified: anthropic.com)"
+    is a name anyone can register, and it must not read like the gate's own label."""
     if not isinstance(value, str):
         return ""
     kept = "".join(ch for ch in value if ch == " " or unicodedata.category(ch)[0] not in "CZ")
-    return " ".join(kept.split())[:MAX_NAME_LENGTH]
+    name = " ".join(kept.split())[:MAX_NAME_LENGTH]
+    return "" if "verif" in name.lower() else name
 
 
 def is_loopback_redirect(uri: str) -> bool:
@@ -249,7 +253,7 @@ class AgentAuth:
         for key in [key for key, item in self._pending.items() if item.expires + PENDING_LINGER <= now]:
             del self._pending[key]
         for key in [key for key, item in self._codes.items() if item.expires <= now]:
-            del self._codes[key]
+            self._used_codes[key] = (self._codes.pop(key).grant_id, now + USED_CODE_MEMORY)
         for key in [key for key, (_, forget) in self._used_codes.items() if forget <= now]:
             del self._used_codes[key]
         for key in [key for key, (_, expires) in self._access.items() if expires <= now]:
@@ -412,11 +416,21 @@ class AgentAuth:
             raise OAuthError("invalid_request", "A PKCE code_challenge (S256) is required.")
         now = self.clock()
         secret = secrets.token_urlsafe(32)
+        evicted = []
         with self._lock:
             self._prune(now)
-            live = [item for item in self._pending.values() if item.outcome is None and item.expires > now]
-            if len(live) >= MAX_PENDING or sum(item.client_ip == client_ip for item in live) >= MAX_PENDING_PER_CLIENT:
+            live = sorted((item for item in self._pending.values() if item.outcome is None and item.expires > now),
+                          key=lambda item: item.created)
+            # A client a trusted proxy can name is refused once it has its share waiting.
+            # Beyond that, and whenever clients can't be told apart (behind Funnel every
+            # request comes from 127.0.0.1), the oldest waiting request makes room: refusing
+            # would let anyone block sign-ins for everyone with a handful of requests.
+            if client_ip and sum(item.client_ip == client_ip for item in live) >= MAX_PENDING_PER_CLIENT:
                 raise Busy()
+            while len(live) >= MAX_PENDING:
+                oldest = live.pop(0)
+                self._close(oldest, "expired", "Newer sign-ins replaced this one before it was approved.")
+                evicted.append(oldest)
             request_id = new_code(REQUEST_ID_LENGTH)
             while request_id in self._pending:
                 request_id = new_code(REQUEST_ID_LENGTH)
@@ -424,9 +438,19 @@ class AgentAuth:
                               challenge=challenge, state=state, resource=resource, issuer=issuer,
                               client_ip=client_ip, created=now, expires=now + PENDING_TTL)
             self._pending[request_id] = pending
+        for item in evicted:
+            self.on_event("evicted", request=item.id, client=item.client.name)
         self.on_event("requested", request=request_id, client=client.name, verified=client.verified,
                       redirect=urlsplit(redirect_uri).netloc)
         return pending, secret
+
+    @staticmethod
+    def _close(pending: Pending, outcome: str, description: str) -> None:
+        """End a request without a grant; its page learns the reason on its next poll."""
+        pending.outcome = outcome
+        pending.redirect = with_params(pending.redirect_uri, {
+            "error": "access_denied", "error_description": description,
+            "state": pending.state, "iss": pending.issuer})
 
     def pending(self) -> list[dict]:
         now = self.clock()
@@ -435,6 +459,7 @@ class AgentAuth:
             items = [item for item in self._pending.values() if item.outcome is None and item.expires > now]
         return [{"id": item.id, "client": item.client.name, "verified": item.client.verified,
                  "clientHost": item.client.host, "redirectHost": urlsplit(item.redirect_uri).netloc,
+                 "loopback": is_loopback_redirect(item.redirect_uri),
                  "age": int(now - item.created), "expiresIn": int(item.expires - now)}
                 for item in sorted(items, key=lambda item: item.created)]
 
@@ -472,10 +497,7 @@ class AgentAuth:
         now = self.clock()
         with self._lock:
             pending = self._open_request(request_id, now)
-            pending.outcome = "denied"
-            pending.redirect = with_params(pending.redirect_uri, {
-                "error": "access_denied", "error_description": "The request was denied at the terminal.",
-                "state": pending.state, "iss": pending.issuer})
+            self._close(pending, "denied", "The request was denied at the terminal.")
         self.on_event("denied", request=pending.id, client=pending.client.name)
 
     def poll(self, browser_secret: str, request_id: str) -> dict | None:
@@ -491,10 +513,7 @@ class AgentAuth:
                       "clientHost": pending.client.host, "redirectHost": urlsplit(pending.redirect_uri).netloc,
                       "expiresIn": max(0, int(pending.expires - now))}
             if pending.outcome is None and pending.expires <= now:
-                pending.outcome = "expired"
-                pending.redirect = with_params(pending.redirect_uri, {
-                    "error": "access_denied", "error_description": "The request expired before it was approved.",
-                    "state": pending.state, "iss": pending.issuer})
+                self._close(pending, "expired", "The request expired before it was approved.")
             result["state"] = pending.outcome or "pending"
             if pending.outcome and not pending.delivered:
                 result["redirect"] = pending.redirect
@@ -535,19 +554,23 @@ class AgentAuth:
         try:
             with self._lock:
                 self._prune(now)
-                entry = self._codes.pop(key, None)
+                entry = self._codes.get(key)
                 if entry is None:
                     used = self._used_codes.get(key)
                     if used is not None:  # a replayed code: whoever holds it, the grant is no longer safe
                         revoked = self._drop_grant(used[0])
                     raise OAuthError("invalid_grant", "The authorization code is unknown, expired or already used.")
-                self._used_codes[key] = (entry.grant_id, now + USED_CODE_MEMORY)
+                # The code is spent only by an exchange that passes every check. Someone who
+                # saw the code but not the verifier (it is visible in the --no-browser flow)
+                # must not be able to burn it, or revoke the grant as a "replay", by trying it.
                 if client_id != entry.client_id or redirect_uri != entry.redirect_uri:
                     raise OAuthError("invalid_grant", "The code was issued to another client or redirect URI.")
                 if not VERIFIER.fullmatch(verifier or "") or not hmac.compare_digest(s256(verifier), entry.challenge):
                     raise OAuthError("invalid_grant", "PKCE verification failed.")
                 if resource and not same_resource(resource, entry.resource):
                     raise OAuthError("invalid_target", "The resource does not match the authorization request.")
+                del self._codes[key]
+                self._used_codes[key] = (entry.grant_id, now + USED_CODE_MEMORY)
                 grant = self._grants.get(entry.grant_id)
                 if not self._usable(grant, now):
                     raise OAuthError("invalid_grant", "The grant has been revoked or has expired.")

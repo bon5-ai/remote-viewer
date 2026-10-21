@@ -32,7 +32,10 @@ client_metadata_documents = true
 # proxy_secret_file = "~/.config/bon5ai-remote/proxy-secret"
 
 # Bind a private, non-loopback address (e.g. a docker bridge gateway for a local reverse
-# proxy). Public or unspecified addresses (0.0.0.0) are always refused.
+# proxy). Public or unspecified addresses (0.0.0.0, ::, ::ffff:0.0.0.0) are always refused.
+# A Tailscale address (100.64.0.0/10) is allowed: that serves plain HTTP to everyone on
+# your tailnet, with no TLS and no per-device access control. Prefer `tailscale serve`
+# in front of a loopback listener (docs/deploy/tailscale.md).
 allow_private_listen = false
 
 # One table per address the gate listens on.

@@ -95,9 +95,12 @@ template doesn't depend on that behaviour, and its cache policy covers every met
 
 ## Per-client lockouts (optional)
 
-Behind CloudFront and Funnel, every request reaches the gate from 127.0.0.1. Wrong
-viewer codes therefore share one limit: 10 in 10 minutes locks pairing for everyone,
-including you, until the window passes. To scope the limit to each client instead:
+Behind CloudFront and Funnel, every request reaches the gate from 127.0.0.1, so the gate
+can't tell one client from another. Wrong viewer codes are then only slowed down (a second
+each, a few at a time) and counted so the terminal is told; nobody is locked out, since a
+shared lockout would let anyone keep you from pairing. Pending agent sign-ins likewise
+share one pool of 10, with the oldest making room. To lock out an address with 10 wrong
+codes in 10 minutes, and give each address its own share of sign-ins:
 
 1. Create an origin request policy that forwards all viewer headers except Host, plus the
    `CloudFront-Viewer-Address` header, and use it in place of the managed one.

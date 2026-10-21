@@ -124,9 +124,10 @@ def make_config(tmp: Path | None = None, *, listeners=None, **overrides) -> Conf
 
 
 def make_state(cfg: Config | None = None, tmux: FakeTmux | None = None, clock=None, fetch_metadata=None,
-               audit_path: Path | None = None) -> State:
+               audit_path: Path | None = None, stream_owned=lambda pid, listen: True) -> State:
     cfg = cfg or make_config()
-    return State(cfg, tmux=tmux or FakeTmux(), audit=Audit(audit_path), clock=clock, fetch_metadata=fetch_metadata)
+    return State(cfg, tmux=tmux or FakeTmux(), audit=Audit(audit_path), clock=clock, fetch_metadata=fetch_metadata,
+                 stream_owned=stream_owned)
 
 
 # ---- a stand-in for asciinema's local server ----------------------------------------------------
@@ -167,6 +168,7 @@ class FakeStream:
         self.sock.listen()
         self.address = self.sock.getsockname()
         self.requests: list[str] = []
+        self.inbound: list[bytes] = []  # bytes received on /ws after the handshake
         threading.Thread(target=self.serve, daemon=True).start()
 
     def serve(self):
@@ -194,7 +196,11 @@ class FakeStream:
                              b"Sec-WebSocket-Accept: " + accept + b"\r\nSec-WebSocket-Protocol: v1.alis\r\n\r\n"
                              + bytes([0x82, 5]) + b"FRAME")
                 try:
-                    conn.recv(1024)  # hold the connection until the gate closes it
+                    # Hold the connection until the gate sends something: its close frame when a
+                    # viewer leaves, or (a bug) a frame relayed from the browser. Either ends it.
+                    data = conn.recv(1024)
+                    if data:
+                        self.inbound.append(data)
                 except OSError:
                     pass
             elif path == "/":

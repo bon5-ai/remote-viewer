@@ -14,6 +14,7 @@ from starlette.testclient import TestClient
 
 from bon5ai_remote import gate as gate_module
 from bon5ai_remote import mcp_server
+from bon5ai_remote import web as web_module
 from bon5ai_remote.agents import s256
 from bon5ai_remote.mcp_server import build_server
 from bon5ai_remote.web import COOKIE, build_app, client_address
@@ -23,6 +24,7 @@ HOST = "https://term.example.test"
 WS_HOST = {"host": "term.example.test"}  # TestClient's websockets otherwise say Host: testserver
 MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json",
                "MCP-Protocol-Version": "2025-06-18"}
+web_module.FAILURE_DELAY = 0.0  # wrong codes are slowed down in production; one test checks that on its own
 
 
 class WithLifespan:
@@ -52,6 +54,7 @@ class ListenerCase(unittest.TestCase):
         self.stream = FakeStream()
         self.tmux = FakeTmux()
         self.tmux.options["@bon5ai_stream"] = f"{self.stream.address[0]}:{self.stream.address[1]}"
+        self.tmux.options["@bon5ai_stream_pid"] = "4242"  # make_state's owner check says it is ours
         self.listener = make_listener(**self.listener_overrides)
         self.audit_path = Path(self.tmp.name) / "audit.jsonl"
         self.state = make_state(make_config(listeners=[self.listener], proxy_secret=self.proxy_secret),
@@ -101,8 +104,61 @@ class ViewerTests(ListenerCase):
 
     def test_unknown_paths_404(self):
         for path in ("/admin", "/pair", "/../pyproject.toml", "/static/index.html", "/token"):
-            self.assertEqual(self.client.get(path).status_code, 404 if path != "/token" else 405, path)
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 404 if path != "/token" else 405, path)
+            # Starlette's own error pages carry none of these; the gate's must.
+            self.assertEqual(response.headers["content-security-policy"], web_module.API_CSP, path)
+            self.assertEqual(response.headers["x-frame-options"], "DENY", path)
         self.assertEqual(self.client.post("/pair").status_code, 404)  # minting is admin-socket only
+        # A trailing slash is not redirected (the redirect would point outside the mount).
+        self.assertEqual(self.client.get("/remote/remote.js/").status_code, 404)
+
+    def test_stream_is_served_only_while_its_owner_lives(self):
+        # The gate serves whatever answers on the recorded port to every viewer, so once
+        # the wrapper `share` started is gone, the port is not trusted even if something
+        # still answers there.
+        cookie = self.pair().split(";")[0]
+        self.assertEqual(self.client.get("/remote/status").json()["state"], "live")
+        self.state.stream_owned = lambda pid, listen: False
+        self.assertEqual(self.client.get("/remote/status").json()["state"], "stream-down")
+        self.assertEqual(self.client.get("/remote/player.js", headers={"cookie": cookie}).status_code, 502)
+        self.state.stream_owned = lambda pid, listen: True
+        del self.tmux.options["@bon5ai_stream_pid"]  # recorded by an older `share`: no owner, no trust
+        self.assertEqual(self.client.get("/remote/status").json()["state"], "stream-down")
+
+    def test_claim_takes_json_from_the_page_only(self):
+        good = self.state.gate.mint()
+        # A text/plain post needs no CORS preflight, so any site could make a browser send it.
+        response = self.client.post("/remote/claim", content=json.dumps({"code": good}),
+                                    headers={"content-type": "text/plain"})
+        self.assertEqual(response.status_code, 415)
+        response = self.client.post("/remote/claim", json={"code": good}, headers={"sec-fetch-site": "cross-site"})
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(len(self.state.gate._all_failures), 0)  # neither counted as a guess
+        self.assertEqual(self.client.post("/remote/claim", json={"code": good},
+                                          headers={"sec-fetch-site": "same-origin"}).status_code, 200)
+
+    def test_a_flood_of_wrong_codes_never_locks_the_owner_out(self):
+        for _ in range(gate_module.FAILURE_LIMIT * 2):
+            self.assertEqual(self.client.post("/remote/claim", json={"code": "AAAA-AAAA"}).status_code, 400)
+        self.assertEqual(self.client.post("/remote/claim", json={"code": self.state.gate.mint()}).status_code, 200)
+        self.assertEqual(len(self.tmux.messages), 1)  # the terminal was told, once
+        self.assertIn("wrong viewer codes", self.tmux.messages[0])
+        with open(self.audit_path) as handle:
+            kinds = [json.loads(line)["event"] for line in handle]
+        self.assertIn("viewer.guessing", kinds)
+
+    def test_a_wrong_code_waits_for_its_answer(self):
+        web_module.FAILURE_DELAY = 0.3
+        try:
+            started = time.monotonic()
+            self.assertEqual(self.client.post("/remote/claim", json={"code": "AAAA-AAAA"}).status_code, 400)
+            self.assertGreaterEqual(time.monotonic() - started, 0.3)
+            started = time.monotonic()
+            self.assertEqual(self.client.post("/remote/claim", json={"code": self.state.gate.mint()}).status_code, 200)
+            self.assertLess(time.monotonic() - started, 0.3)  # a right answer is never delayed
+        finally:
+            web_module.FAILURE_DELAY = 0.0
 
     def test_status_needs_a_viewer(self):
         self.assertEqual(self.client.get("/remote/status").status_code, 401)
@@ -165,6 +221,24 @@ class ViewerTests(ListenerCase):
         self.assertFalse([request for request in self.stream.requests if request.startswith("GET /ws")])
         self.assertEqual(self.client.get("/remote/player.js", headers={"cookie": cookie}).status_code, 401)
 
+    def test_only_the_players_subprotocol_goes_upstream(self):
+        from starlette.websockets import WebSocketDisconnect
+        cookie = self.pair().split(";")[0]
+        # Anything else the browser offers is left out, even when it is not a valid token
+        # (which used to raise a ValueError from the websockets library, a 500).
+        with self.client.websocket_connect("/remote/ws", subprotocols=["a b", "v1.alis"],
+                                           headers={**WS_HOST, "cookie": cookie, "origin": HOST}) as ws:
+            self.assertEqual(ws.accepted_subprotocol, "v1.alis")
+            self.assertEqual(ws.receive_bytes(), b"FRAME")
+        self.assertIn("Sec-WebSocket-Protocol: v1.alis\r\n", self.stream.requests[-1])
+        self.assertNotIn("a b", self.stream.requests[-1])
+        # Without the player's protocol, the stream's answer (which names it) is a bad
+        # handshake: the socket closes cleanly.
+        with self.assertRaises(WebSocketDisconnect):
+            with self.client.websocket_connect("/remote/ws", subprotocols=["a b"],
+                                               headers={**WS_HOST, "cookie": cookie, "origin": HOST}) as ws:
+                ws.receive_bytes()
+
     def test_websocket_is_relayed_with_only_handshake_headers(self):
         cookie = self.pair().split(";")[0]
         with self.client.websocket_connect("/remote/ws", subprotocols=["v1.alis"],
@@ -172,6 +246,10 @@ class ViewerTests(ListenerCase):
             self.assertEqual(ws.accepted_subprotocol, "v1.alis")
             self.assertEqual(ws.receive_bytes(), b"FRAME")
             self.assertEqual(self.tmux.options["@bon5ai_viewers"], "1")
+            ws.send_text("hello")  # the stream is one-way: nothing a browser sends reaches asciinema
+            ws.send_bytes(b"\x00\x01")
+            time.sleep(0.2)
+            self.assertEqual(self.stream.inbound, [])
         upstream = self.stream.requests[-1]
         self.assertTrue(upstream.startswith("GET /ws HTTP/1.1"))
         self.assertIn("Sec-WebSocket-Protocol: v1.alis", upstream)

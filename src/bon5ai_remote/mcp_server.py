@@ -128,8 +128,11 @@ def check_text(text, *, allow_newlines: bool, allow_tab: bool = True) -> str:
     Refuses every control character (ESC above all: it is how a pasted text could end
     bracketed paste early or drive the terminal), DEL, line/paragraph separators and
     Unicode format characters (bidi overrides, zero-width), which can make the text a
-    person reviews differ from what runs. Suggest scope refuses Tab too: completion
-    can run code (a Makefile's $(shell ...), for one) before anyone presses Enter."""
+    person reviews differ from what runs, and every space but the ASCII one (a no-break
+    space looks like a word boundary and isn't one to the shell). Suggest scope refuses
+    Tab too: completion can run code (a Makefile's $(shell ...), for one) before anyone
+    presses Enter. Look-alike letters (a Cyrillic a) are not caught: that is a review
+    problem for the person, not a filter."""
     if not isinstance(text, str) or not text:
         raise ToolError("invalid_text", "text must be a non-empty string")
     if len(text.encode("utf-8", "surrogatepass")) > MAX_TEXT_BYTES:
@@ -138,7 +141,7 @@ def check_text(text, *, allow_newlines: bool, allow_tab: bool = True) -> str:
         if (ch == "\t" and allow_tab) or (ch == "\n" and allow_newlines):
             continue
         category = unicodedata.category(ch)
-        if category in ("Cc", "Cf", "Cs", "Zl", "Zp") or ch == "\x7f":
+        if category in ("Cc", "Cf", "Cs", "Zl", "Zp") or ch == "\x7f" or (category == "Zs" and ch != " "):
             name = {"\n": "newline", "\t": "tab"}.get(ch, f"U+{ord(ch):04X}")
             raise ToolError("invalid_text", f"text contains a character that can't be typed safely ({name})")
     return text

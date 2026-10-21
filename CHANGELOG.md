@@ -6,6 +6,32 @@
   `headersHelper` run Python with `-P`, so a `bon5ai_remote` package planted in the
   working directory (a cloned repository, say) can no longer be imported in place of the
   installed one. Re-run `agent token` and `install-service` to regenerate them.
+- **Security.** Wrong viewer codes no longer lock pairing when the gate can't tell clients
+  apart (behind Funnel, every request comes from 127.0.0.1): ten wrong codes used to lock
+  everyone out, the owner included, for ten minutes, and anyone could repeat that. Wrong
+  answers now wait a second each, a few at a time, and the terminal is told after ten.
+  Behind a trusted `client_ip_header` an address is still locked out. The global pause at
+  100 wrong codes is gone with it. Pending agent sign-ins follow the same idea: when the
+  gate's 10 are taken, the oldest makes room instead of everyone being refused.
+- **Security.** The gate trusts the stream's port only while the wrapper `share` started
+  is alive and owns it. After asciinema exited, another local user could bind the port and
+  the gate would have relayed it, player script included. `share` records the wrapper's
+  pid; run it again once after upgrading so the running stream is recorded.
+- **Security.** `allow_private_listen` no longer accepts `::ffff:0.0.0.0`, which binds every
+  IPv4 interface. A Tailscale address is still accepted; config.example.toml says what that
+  means.
+- **Security.** `/claim` takes JSON from the viewer page only, every error page carries the
+  security headers, a trailing slash is no longer redirected, and the websocket relay sends
+  nothing a browser says on to asciinema and no longer trips over a malformed subprotocol.
+- **Security.** An authorization code is spent only by an exchange that passes every check,
+  so trying a code without its verifier neither burns it nor revokes the grant; an expired
+  code replayed later still does. A client name that claims to be verified is dropped, and
+  the sign-in page shows the identity line apart from the name. `agent approve` no longer
+  picks a lone request on its own when it returns to a hosted callback. Text an agent types
+  may not contain a no-break or other non-ASCII space. The metadata fetch's deadline now
+  starts before the name lookup.
+- `stream.log` is created 0600, and the service units set `UMask=0077`. CI pins its actions
+  by commit.
 - OAuth and MCP authorization follow the client-metadata and token rules more closely.
   A metadata URL that does not answer is remembered on its own, for a minute; an error
   response or an invalid document is not cached, so one bad URL cannot lock out every

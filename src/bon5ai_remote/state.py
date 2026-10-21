@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 
-from . import cimd
+from . import cimd, stream
 from .agents import AgentAuth, Grant
 from .audit import Audit
 from .config import Config, ConfigError, is_loopback, parse_address
@@ -12,6 +12,7 @@ from .gate import Gate
 from .tmux import Tmux
 
 STREAM_OPTION = "@bon5ai_stream"
+STREAM_PID_OPTION = "@bon5ai_stream_pid"
 VIEWERS_OPTION = "@bon5ai_viewers"
 AGENTS_OPTION = "@bon5ai_agents"
 PENDING_OPTION = "@bon5ai_pending"
@@ -24,14 +25,15 @@ def badge_text(value: str) -> str:
 
 class State:
     def __init__(self, cfg: Config, *, tmux: Tmux | None = None, audit: Audit | None = None,
-                 fetch_metadata=None, clock=None):
+                 fetch_metadata=None, clock=None, stream_owned=stream.owner_alive):
         self.cfg = cfg
         self.tmux = tmux or Tmux(cfg.tmux_socket, cfg.session)
         self.audit = audit or Audit(cfg.audit_log)
+        self.stream_owned = stream_owned
         extra = {"clock": clock} if clock else {}
         self.gate = Gate(code_ttl=cfg.code_ttl, viewer_ttl=cfg.viewer_ttl, session_lookup=self.tmux.session_key,
                          host_attached=self.tmux.host_attached, stream_address=self.stream_address,
-                         on_viewers=self._viewers_changed, on_lockout=self._lockout, **extra)
+                         on_viewers=self._viewers_changed, on_guessing=self._guessing, **extra)
         if fetch_metadata is None and cfg.client_metadata_documents:
             fetch_metadata = cimd.fetch
         self.agents = AgentAuth(agent_ttl=cfg.agent_ttl, access_ttl=cfg.access_token_ttl,
@@ -43,15 +45,23 @@ class State:
 
     # ---- tmux-backed facts ----------------------------------------------------------
     def stream_address(self) -> tuple[str, int] | None:
-        """asciinema's local server for the session, as `share` recorded it. Loopback only."""
+        """asciinema's local server for the session, as `share` recorded it.
+
+        Loopback only, and only while the stream wrapper `share` started still owns it.
+        The gate relays that server and serves its player script to every viewer, so a
+        port whose owner is gone (asciinema crashed, say) must not be trusted: any local
+        user could bind it next."""
         value = self.tmux.get_option(STREAM_OPTION)
-        if not value:
+        pid = self.tmux.get_option(STREAM_PID_OPTION) or ""
+        if not value or not pid.isdigit():
             return None
         try:
             host, port = parse_address(value)
         except ConfigError:
             return None
-        return (host, port) if is_loopback(host) else None
+        if not is_loopback(host) or not self.stream_owned(int(pid), value):
+            return None
+        return (host, port)
 
     def session_alive(self, grant: Grant) -> bool:
         """True while the grant's tmux session still runs; otherwise the grant is revoked."""
@@ -67,9 +77,10 @@ class State:
         if self.tmux.session_key() == session:
             self.tmux.set_option(VIEWERS_OPTION, str(count))
 
-    def _lockout(self) -> None:
-        self.audit.record("viewer.lockout")
-        self.tmux.display("Viewer pairing is paused: too many wrong codes. It resumes within 10 minutes.")
+    def _guessing(self, failures: int) -> None:
+        self.audit.record("viewer.guessing", failures=failures)
+        self.tmux.display(f"{failures} wrong viewer codes in 10 minutes: someone may be guessing. "
+                          "Pairing stays open; wrong answers are slowed down.")
 
     def _agent_event(self, kind: str, **fields) -> None:
         self.audit.record(f"agent.{kind}", **fields)

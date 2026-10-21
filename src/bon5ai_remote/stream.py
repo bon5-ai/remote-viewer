@@ -96,6 +96,46 @@ def stop(pid: int) -> None:
     os.waitpid(pid, 0)
 
 
+def _argv_of(pid: int) -> tuple[int, list[str]] | None:
+    """(uid, argv) of a running process, or None. /proc on Linux, ps elsewhere."""
+    proc = Path("/proc") / str(pid)
+    try:
+        if proc.is_dir():
+            argv = proc.joinpath("cmdline").read_bytes().split(b"\0")
+            return proc.stat().st_uid, [part.decode(errors="replace") for part in argv if part]
+        result = subprocess.run(["ps", "-o", "uid=,args=", "-p", str(pid)], capture_output=True, text=True,
+                                timeout=5)
+        fields = result.stdout.split()
+        if len(fields) < 2 or not fields[0].isdigit():
+            return None
+        return int(fields[0]), fields[1:]
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def owner_alive(pid: int, listen: str, argv_of=_argv_of) -> bool:
+    """True while pid is this user's stream wrapper for `listen`.
+
+    `share` records the wrapper's pid next to the address it listens on. The gate relays
+    whatever answers on that port and serves its player script to every viewer, so the
+    port must still be ours: once asciinema has exited, any local user could bind it. A
+    pid that has died, belongs to someone else, or runs something other than this
+    wrapper for this address is refused. (A port taken in the instant between `share`
+    choosing it and asciinema binding it is still not caught; the wrapper would then
+    fail to start and `share` would report it.)"""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return False  # alive, but not ours
+    found = argv_of(pid)
+    if found is None:
+        return False
+    uid, argv = found
+    return uid == os.getuid() and "bon5ai_remote.stream" in argv and "--listen" in argv and listen in argv
+
+
 def command(socket_path: Path, session: str, listen: str) -> list[str]:
     # exec: asciinema runs this through sh -c, and stop() needs the tmux client to be
     # asciinema's own child rather than a shell's.

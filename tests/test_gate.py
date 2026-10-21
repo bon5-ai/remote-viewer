@@ -12,16 +12,13 @@ class FakeSession:
         self.host = True
         self.stream = ("127.0.0.1", 9)
         self.viewer_counts = []
-        self.lockouts = 0
+        self.notices = []
 
     def gate(self, clock):
         return gate.Gate(code_ttl=600, viewer_ttl=3600, session_lookup=lambda: self.session,
                          host_attached=lambda: self.host, stream_address=lambda: self.stream,
                          on_viewers=lambda session, count: self.viewer_counts.append(count),
-                         on_lockout=self.lockout, clock=clock)
-
-    def lockout(self):
-        self.lockouts += 1
+                         on_guessing=self.notices.append, clock=clock)
 
 
 class GateTests(unittest.TestCase):
@@ -66,15 +63,28 @@ class GateTests(unittest.TestCase):
         self.fake.session = None
         self.assertIsNone(self.gate.mint())
 
-    def test_wrong_codes_lock_pairing_for_the_window(self):
+    def test_wrong_codes_never_lock_the_shared_bucket(self):
+        # Behind Funnel every client is "". Locking that bucket would let anyone keep the
+        # owner from pairing with ten requests every ten minutes; the listener's delay is
+        # the brake instead, and the terminal is told once.
         code = self.gate.mint()
+        for n in range(gate.FAILURE_LIMIT * 3):
+            with self.assertRaises(gate.InvalidCode) as refused:
+                self.gate.claim("AAAA-AAAA")
+            self.assertEqual(refused.exception.failures, n + 1)
+        self.assertEqual(self.fake.notices, [gate.FAILURE_LIMIT])
+        self.assertTrue(self.gate.claim(code))  # a good code works at any point
+        self.assertNotIn("", self.gate._failures)
+
+    def test_the_guessing_notice_repeats_once_per_window(self):
         for _ in range(gate.FAILURE_LIMIT):
             with self.assertRaises(gate.InvalidCode):
                 self.gate.claim("AAAA-AAAA")
-        with self.assertRaises(gate.Throttled):
-            self.gate.claim(code)  # even a good code, until the window passes
         self.clock.now += gate.FAILURE_WINDOW_SECONDS + 1
-        self.assertTrue(self.gate.claim(self.gate.mint()))
+        for _ in range(gate.FAILURE_LIMIT):
+            with self.assertRaises(gate.InvalidCode):
+                self.gate.claim("AAAA-AAAA", client="198.51.100.7")  # named clients count too
+        self.assertEqual(self.fake.notices, [gate.FAILURE_LIMIT, gate.FAILURE_LIMIT])
 
     def test_lockout_is_per_client_when_the_client_is_known(self):
         for _ in range(gate.FAILURE_LIMIT):
@@ -82,16 +92,18 @@ class GateTests(unittest.TestCase):
                 self.gate.claim("AAAA-AAAA", client="198.51.100.7")
         with self.assertRaises(gate.Throttled):
             self.gate.claim("AAAA-AAAA", client="198.51.100.7")
-        # The owner, on another address, can still pair.
+        # The owner, on another address, can still pair; so can one the proxy can't name.
         self.assertTrue(self.gate.claim(self.gate.mint(), client="203.0.113.9"))
+        self.assertTrue(self.gate.claim(self.gate.mint()))
+        self.clock.now += gate.FAILURE_WINDOW_SECONDS + 1
+        self.assertTrue(self.gate.claim(self.gate.mint(), client="198.51.100.7"))
 
-    def test_global_ceiling_holds_against_rotating_addresses(self):
-        for n in range(gate.GLOBAL_FAILURE_LIMIT):
+    def test_rotating_addresses_never_lock_anyone_else_out(self):
+        for n in range(gate.FAILURE_LIMIT * 20):
             with self.assertRaises(gate.InvalidCode):
                 self.gate.claim("AAAA-AAAA", client=f"198.51.100.{n % 250}-{n}")
-        self.assertEqual(self.fake.lockouts, 1)
-        with self.assertRaises(gate.Throttled):
-            self.gate.claim(self.gate.mint(), client="203.0.113.9")
+        self.assertEqual(self.fake.notices, [gate.FAILURE_LIMIT])
+        self.assertTrue(self.gate.claim(self.gate.mint(), client="203.0.113.9"))
 
     def test_viewer_is_bound_to_its_session(self):
         token = self.gate.claim(self.gate.mint())

@@ -58,9 +58,12 @@ function show(request) {
   requestId = request.id;
   $('request-id').textContent = request.id;
   $('command-id').textContent = request.id;
-  $('client').textContent = request.verified
-    ? `${request.client} (verified: ${request.clientHost})`
-    : `${request.client} (the agent chose this name; it is not verified)`;
+  // The name is the agent's own words; the identity line is the gate's, kept apart so a
+  // name can't dress itself up as verified.
+  $('client').textContent = request.client;
+  $('identity').textContent = request.verified
+    ? `verified: ${request.clientHost}`
+    : 'not verified: the agent chose this name';
   $('redirect').textContent = request.redirectHost;
   $('expires').textContent = minutes(request.expiresIn);
 }

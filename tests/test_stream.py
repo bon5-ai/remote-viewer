@@ -1,7 +1,9 @@
 """The stream wrapper must size asciinema's terminal to the tmux window plus its status line."""
 
+import os
 import shlex
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -50,6 +52,41 @@ class StreamSizeTests(unittest.TestCase):
         run = runner("101\n102\n")
         self.assertEqual(stream.children(7, run), [101, 102])
         self.assertEqual(run.args, ["pgrep", "-P", "7"])
+
+
+class OwnerTests(unittest.TestCase):
+    """The gate trusts the stream port only while the wrapper `share` started owns it."""
+
+    LISTEN = "127.0.0.1:4100"
+
+    def test_judges_uid_and_command_line(self):
+        me = os.getuid()
+        wrapper = ["python", "-P", "-m", "bon5ai_remote.stream", "--socket", "/x", "--session", "s",
+                   "--listen", self.LISTEN]
+        cases = [((me, wrapper), True),
+                 ((me + 1, wrapper), False),  # alive, but another user's
+                 ((me, ["python", "-m", "http.server"]), False),  # the pid was reused
+                 ((me, wrapper[:-1] + ["127.0.0.1:4101"]), False),  # ours, but not for this port
+                 (None, False)]
+        for found, expected in cases:
+            self.assertEqual(stream.owner_alive(os.getpid(), self.LISTEN, argv_of=lambda pid: found), expected, found)
+
+    def test_a_dead_pid_is_never_the_owner(self):
+        child = subprocess.Popen([sys.executable, "-c", "pass"])
+        child.wait()
+        self.assertFalse(stream.owner_alive(child.pid, self.LISTEN, argv_of=lambda pid: (os.getuid(), ["x"])))
+
+    def test_reads_a_real_process(self):
+        # A child whose argv looks like the wrapper's, without needing tmux or asciinema.
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)",
+                                  "bon5ai_remote.stream", "--listen", self.LISTEN])
+        try:
+            self.assertTrue(stream.owner_alive(child.pid, self.LISTEN))
+            self.assertFalse(stream.owner_alive(child.pid, "127.0.0.1:4101"))
+        finally:
+            child.kill()
+            child.wait()
+        self.assertFalse(stream.owner_alive(child.pid, self.LISTEN))
 
 
 if __name__ == "__main__":

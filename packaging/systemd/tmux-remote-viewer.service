@@ -12,6 +12,7 @@ ExecStart=%h/.local/bin/tmux-remote-viewer serve
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes
+UMask=0077
 
 [Install]
 WantedBy=default.target

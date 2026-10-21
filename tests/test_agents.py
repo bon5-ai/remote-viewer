@@ -255,15 +255,74 @@ class AgentAuthTests(unittest.TestCase):
         with self.assertRaises(agents.NotFound):
             self.auth.approve(flow.pending.id, scope="observe", pane_id="%1", session_key="s")
 
-    def test_pending_requests_are_capped(self):
+    def test_a_named_client_gets_its_share_of_pending_requests(self):
         for n in range(agents.MAX_PENDING_PER_CLIENT):
             Flow(self.auth).start(client_ip="198.51.100.7")
         with self.assertRaises(agents.Busy):
             Flow(self.auth).start(client_ip="198.51.100.7")
-        for n in range(agents.MAX_PENDING - agents.MAX_PENDING_PER_CLIENT):
-            Flow(self.auth).start(client_ip=f"203.0.113.{n}")
-        with self.assertRaises(agents.Busy):
-            Flow(self.auth).start(client_ip="192.0.2.1")
+        Flow(self.auth).start(client_ip="203.0.113.9")  # someone else is not affected
+
+    def test_a_full_gate_evicts_the_oldest_request_instead_of_refusing(self):
+        # Behind Funnel every request is "" and refusing would let three strangers' sign-ins
+        # block everyone's for five minutes; so would ten named addresses. The oldest makes room.
+        first = Flow(self.auth)
+        first.start()
+        self.clock.now += 1
+        for n in range(agents.MAX_PENDING - 1):
+            Flow(self.auth).start()
+        self.clock.now += 1
+        newest = Flow(self.auth)
+        newest.start(client_ip="198.51.100.7")  # never Busy, named or not
+        self.assertEqual(len(self.auth.pending()), agents.MAX_PENDING)
+        self.assertNotIn(first.pending.id, [item["id"] for item in self.auth.pending()])
+        self.assertIn(newest.pending.id, [item["id"] for item in self.auth.pending()])
+        page = self.auth.poll(first.secret, first.pending.id)
+        self.assertEqual(page["state"], "expired")
+        self.assertIn("error=access_denied", page["redirect"])
+        self.assertIn(("evicted", {"request": first.pending.id, "client": "Claude Code"}), self.events)
+        with self.assertRaises(agents.NotFound):
+            self.auth.approve(first.pending.id, scope="observe", pane_id="%1", session_key="s")
+
+    def test_pending_says_whether_the_callback_is_loopback(self):
+        auth = AgentAuth(agent_ttl=3600, access_ttl=600, clock=self.clock,
+                         allowed_redirect_uris=["https://chat.example.test/oauth/callback"])
+        Flow(auth).start()
+        Flow(auth, redirect="https://chat.example.test/oauth/callback").start()
+        self.assertEqual([item["loopback"] for item in auth.pending()], [True, False])
+
+    def test_a_failed_exchange_does_not_spend_the_code(self):
+        # Someone who saw the code but not the verifier (the --no-browser flow shows the
+        # whole redirect) must not be able to burn it, or get the grant revoked as a replay.
+        flow = Flow(self.auth)
+        flow.start()
+        grant = flow.approve()
+        code = flow.code()
+        with self.assertRaisesRegex(OAuthError, "PKCE"):
+            self.auth.exchange_code(code=code, client_id=flow.client.id, redirect_uri=flow.redirect,
+                                    verifier="x" * 43, resource=RESOURCE)
+        with self.assertRaisesRegex(OAuthError, "another client"):
+            self.auth.exchange_code(code=code, client_id="client-other", redirect_uri=flow.redirect,
+                                    verifier=flow.verifier, resource=RESOURCE)
+        self.assertIsNotNone(self.auth.grant(grant.id))
+        tokens = self.auth.exchange_code(code=code, client_id=flow.client.id, redirect_uri=flow.redirect,
+                                         verifier=flow.verifier, resource=RESOURCE)
+        self.assertIn("access_token", tokens)
+        with self.assertRaisesRegex(OAuthError, "already used"):  # a real replay still revokes
+            self.auth.exchange_code(code=code, client_id=flow.client.id, redirect_uri=flow.redirect,
+                                    verifier=flow.verifier, resource=RESOURCE)
+        self.assertIsNone(self.auth.grant(grant.id))
+
+    def test_an_expired_code_replayed_later_still_revokes(self):
+        flow = Flow(self.auth)
+        flow.start()
+        grant = flow.approve()
+        code = flow.code()
+        self.clock.now += agents.AUTH_CODE_TTL + 1
+        self.auth.prune()  # the expired code is remembered as used, not just forgotten
+        with self.assertRaisesRegex(OAuthError, "already used"):
+            self.auth.exchange_code(code=code, client_id=flow.client.id, redirect_uri=flow.redirect,
+                                    verifier=flow.verifier, resource=RESOURCE)
+        self.assertIsNone(self.auth.grant(grant.id))
 
     def test_wrong_browser_secret_sees_nothing(self):
         flow = Flow(self.auth)
@@ -323,6 +382,15 @@ class RegistrationTests(unittest.TestCase):
     def test_public_clients_only(self):
         with self.assertRaises(OAuthError):
             self.auth.register({"redirect_uris": [REDIRECT], "token_endpoint_auth_method": "client_secret_basic"})
+
+    def test_a_name_cannot_claim_to_be_verified(self):
+        # "Claude (verified: anthropic.com)" is a name anyone can register. The page shows the
+        # gate's own identity line apart from the name, and such a name is dropped anyway.
+        for name in ("Claude (verified: anthropic.com)", "VERIFIED Claude", "Verifier Bot"):
+            self.assertEqual(agents.clean_name(name), "", name)
+            client = self.auth.register({"redirect_uris": [REDIRECT], "client_name": name})
+            self.assertEqual(client.name, "Unnamed client")
+        self.assertEqual(agents.clean_name("Claude Code"), "Claude Code")
 
     def test_names_are_cleaned(self):
         client = self.auth.register({"redirect_uris": [REDIRECT],

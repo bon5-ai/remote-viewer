@@ -20,26 +20,27 @@
 
 | Threat | Control |
 |---|---|
-| Guessing a viewer code | 8 characters from a 31-letter alphabet (about 40 bits), used once, valid 10 minutes. 10 wrong codes in 10 minutes block the client: everyone when clients can't be told apart, one address behind a trusted `client_ip_header`. 100 wrong codes in total pause pairing and tell the terminal. |
+| Guessing a viewer code | 8 characters from a 31-letter alphabet (about 40 bits), used once, valid 10 minutes. Every wrong answer waits a second, and at most 8 claims are in progress at once, so guessing runs at a few codes a second against 8.5 × 10¹¹. Behind a trusted `client_ip_header`, an address with 10 wrong codes in 10 minutes is locked out for the window. Nobody else is ever locked out: a shared lockout would let anyone keep the owner from pairing. After 10 wrong codes in 10 minutes, from anywhere, the terminal is told. |
 | Codes leaking through logs | The QR link carries the code in the URL fragment, which browsers never send. The page then removes it from the address bar. |
 | Stealing a viewer or agent session | Every token is random, 256 bits, stored as a SHA-256 digest in memory only. Cookies are HttpOnly, Secure, SameSite=Strict and directory-scoped. A viewer is bound to its session: once that session ends, its cookie can't open the stream or the player, even if a new session has started. |
 | An agent signing itself in | Approval needs the admin socket (a 0700 directory, a 0600 socket, the peer uid checked), so it takes a shell as this user. No public route grants anything. |
-| A phished approval (an attacker starts a sign-in and asks you to approve it) | The sign-in page and `agent approve` both show the same request ID. You are told to approve only IDs on pages you opened. Redirects go only to localhost or an explicit allowlist, so the auth code lands on the machine that opened the page. PKCE keeps a stolen code useless. |
-| A stolen or replayed auth code or refresh token | A code is used once, lives 60 s, and is bound to its client, redirect URI, PKCE challenge and resource. A replayed code revokes the grant. Refresh tokens rotate. A retry within 30 s gets the same new pair, never a second chain; reuse after that revokes the grant. Each grant keeps at most 5 tokens of each kind. |
+| A phished approval (an attacker starts a sign-in and asks you to approve it) | The sign-in page and `agent approve` both show the same request ID. You are told to approve only IDs on pages you opened. Redirects go only to localhost or an explicit allowlist, so the auth code lands on the machine that opened the page. A request returning to a hosted callback is never picked by default: `agent approve` needs its ID. PKCE keeps a stolen code useless. |
+| A stolen or replayed auth code or refresh token | A code is used once, lives 60 s, and is bound to its client, redirect URI, PKCE challenge and resource. Only an exchange that passes every check spends it, so someone who saw the code but not the verifier can neither burn it nor get the grant revoked by trying. A replayed code, expired or not, revokes the grant. Refresh tokens rotate. A retry within 30 s gets the same new pair, never a second chain; reuse after that revokes the grant. Each grant keeps at most 5 tokens of each kind. |
 | A token used against another server or URL | Tokens are audience-bound (RFC 8707) to the exact MCP URL they were issued for, and checked on every call. |
 | Scope escalation | Scope comes from the approval only. The tool list is filtered by scope, and calls are checked again. |
 | An agent typing somewhere unexpected | The grant is pinned to a pane in its own session. Writes are refused when that pane is gone, in copy mode or not on screen, when the person typed in the last 2 s, or when the screen changed since the agent read it (`if_screen`). `run_command` clears the input line first, and presses Enter only once that line shows the command as typed. |
 | Escape and flag injection when typing | `send-keys -l --`, with the trailing `;` escaped for tmux's parser. ESC, all C0 and C1 controls, DEL, line separators, and bidi and zero-width characters are refused. Named keys come from an allowlist without C-s and C-q. Pastes use private single-use buffers. |
 | `run_command` returning early, so the agent types into a running program | Done means the foreground process group is the shell again **and** the screen has settled since it changed. |
-| `suggest` getting something to run without Enter | Text only, with no Tab (completion can run code), and only while a known local shell owns the terminal and no full-screen program is up. |
+| `suggest` getting something to run without Enter | Text only, with no Tab (completion can run code), and only while a known local shell owns the terminal and no full-screen program is up. Every space but the ASCII one is refused, so a line reads the way it tokenizes; look-alike letters are not caught, which is one reason `suggest` is for a person who is watching. |
 | DNS rebinding against a local listener | Every request's Host header must be the public host, a loopback address on that port, or an explicit `allowed_hosts` entry. `/mcp` and `/ws` also check `Origin`. |
 | Bypassing the proxy (reaching the Funnel origin directly) | `proxy_header` plus a secret. Requests without it get a 404. With the header configured and no secret available, the gate refuses to start. |
-| Abuse of unauthenticated endpoints | Registrations are capped at 100. When the cap is full, the least recently used registration that has no grant or sign-in in progress is forgotten, so a flood can neither fill the table nor lock registration. Unused registrations are forgotten after a week. Pending sign-ins are capped at 10 (3 per client). Request bodies are capped, and client names are cleaned of control and bidi characters, as are tmux's pane and window names. |
+| Abuse of unauthenticated endpoints | Registrations are capped at 100. When the cap is full, the least recently used registration that has no grant or sign-in in progress is forgotten, so a flood can neither fill the table nor lock registration. Unused registrations are forgotten after a week. Pending sign-ins are capped at 10: a client a trusted proxy can name gets 3, and when the gate is full the oldest waiting request is expired to make room, never a refusal that would let a few requests block everyone's sign-in. Request bodies are capped, and client names are cleaned of control and bidi characters, as are tmux's pane and window names; a name that claims to be verified is dropped, and the sign-in page shows the gate's own identity line apart from the name. |
 | SSRF through Client ID Metadata Documents | https only, with a real path and no `.` or `..` segments. Every resolved address must be public, including any IPv4 address embedded in an IPv6 one (mapped, 6to4, Teredo, NAT64). The connection is pinned to the checked address. No redirects, a 64 KB cap, and a single 5 s deadline for the whole fetch, enforced by a watchdog. A document that carries a client secret is refused. |
-| Starving the gate with slow metadata servers | Metadata fetches run in their own pool of 4 threads, separate from the requests the gate serves. A URL that does not answer isn't fetched again for a minute. Error responses and invalid documents are not cached, so one bad URL cannot block the rest of its host. |
+| Starving the gate with slow metadata servers | Metadata fetches run in their own pool of 4 threads, separate from the requests the gate serves. The 5 s deadline starts before the name lookup; the lookup itself can't be interrupted, so a slow resolver holds one of the 4 threads for its own timeout, but nothing after it. A URL that does not answer isn't fetched again for a minute. Error responses and invalid documents are not cached, so one bad URL cannot block the rest of its host. |
 | Someone else revoking a token | `/revoke` ends a grant only when `client_id` is the client the token was issued to. An unknown token gets an empty 200. A token from `agent token` has no OAuth client, so whoever holds it can end it. |
-| Clickjacking, script injection | A strict CSP with `frame-ancestors 'none'`. The sign-in page has no inline script and renders values with `textContent`. |
-| Not noticing | The status line shows viewers, agents and pending sign-ins. `prefix + X` revokes every agent. An append-only 0600 audit log records approvals, revocations and every write with its text. |
+| Clickjacking, script injection | A strict CSP with `frame-ancestors 'none'` on every response, error pages included. The sign-in page has no inline script and renders values with `textContent`. `/claim` takes JSON only and refuses cross-site requests, so no other page can make a browser submit guesses. |
+| Reaching asciinema's server through the relay | The relay forwards the handshake and the stream's own subprotocol upstream, and the stream's frames downstream. Frames a browser sends are read and dropped. |
+| Not noticing | The status line shows viewers, agents and pending sign-ins. `prefix + X` revokes every agent. An append-only 0600 audit log records approvals, revocations, evicted sign-ins, guessing and every write with its text. |
 
 ## What this does not protect against
 
@@ -65,11 +66,22 @@
   one character at a time, use aliases, `$(…)`, base64, or a REPL.
 - **Other users on the same host.** asciinema's local stream server (127.0.0.1, random
   port) has no authentication. Any local user who finds the port can watch.
-  `tmux-remote-viewer doctor` warns when other users are logged in.
+  `tmux-remote-viewer doctor` warns when other users are logged in. The gate serves that
+  server's player script to every viewer, so it trusts the port only while the stream
+  wrapper `share` started is alive, is yours and names that port; a port taken after
+  asciinema exits is not relayed. The instant between `share` choosing a port and
+  asciinema binding it is not covered: a port taken then makes asciinema fail to start,
+  which `share` reports.
+- **The stream wrapper's own command line.** The commands the gate writes for tmux, the
+  service and Claude Code's `headersHelper` run Python with `-P`, so a package planted in
+  whatever directory they run from (a cloned repository, say) is not imported in place of
+  the installed one.
 - **Who can read the CloudFront secret.** Anyone who can read the distribution's config in
   your AWS account can read the origin secret.
 - **Hosted OAuth clients.** A web chat's shared callback in `allowed_redirect_uris` means
-  any user of that service can start a sign-in. The request ID check is the only defence.
+  any user of that service can start a sign-in. The request ID check is the only defence,
+  which is why `agent approve` never picks such a request on its own, even when it is the
+  only one waiting.
 - **Plain HTTP on loopback.** Reached as `127.0.0.1`, `localhost` or `[::1]`, the issuer
   and its endpoints are `http://`. Anywhere else, `public_url` has to be https.
 

@@ -22,6 +22,7 @@ import json
 import socket
 import ssl
 import threading
+import time
 from urllib.parse import unquote, urlsplit
 
 MAX_BYTES = 64 * 1024
@@ -65,10 +66,10 @@ def is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return ip.is_global and not ip.is_multicast
 
 
-def _abort(conn, expired: threading.Event) -> None:
+def _abort(holder: dict, expired: threading.Event) -> None:
     """Wake whatever read the fetch is blocked in: shutdown, unlike close, interrupts it."""
     expired.set()
-    raw = getattr(conn, "raw_socket", None)
+    raw = getattr(holder.get("conn"), "raw_socket", None)
     if raw is not None:
         try:
             raw.shutdown(socket.SHUT_RDWR)
@@ -111,13 +112,23 @@ def check_url(url: str) -> tuple[str, int, str]:
 def fetch(url: str, *, resolve=socket.getaddrinfo, context: ssl.SSLContext | None = None,
           connection_class=_PinnedHTTPSConnection, deadline: float = DEADLINE) -> dict:
     host, port, target = check_url(url)
-    address = _global_address(host, port, resolve)
-    conn = connection_class(host, address, port, context or ssl.create_default_context(), deadline)
+    # The deadline covers the name lookup too. getaddrinfo itself can't be interrupted, so a
+    # resolver that answers late still holds this thread for its own timeout, but nothing
+    # after it: whatever the lookup took is gone from the connection's budget.
+    started = time.monotonic()
     expired = threading.Event()
-    watchdog = threading.Timer(deadline, _abort, args=(conn, expired))
+    holder: dict = {}
+    watchdog = threading.Timer(deadline, _abort, args=(holder, expired))
     watchdog.daemon = True
     watchdog.start()
+    conn = None
     try:
+        address = _global_address(host, port, resolve)
+        remaining = deadline - (time.monotonic() - started)
+        if expired.is_set() or remaining <= 0:
+            raise TransportError("client metadata took too long")
+        conn = holder["conn"] = connection_class(host, address, port, context or ssl.create_default_context(),
+                                                 remaining)
         conn.request("GET", target, headers={"Accept": "application/json", "User-Agent": "tmux-remote-viewer"})
         response = conn.getresponse()
         if response.status != 200:
@@ -129,7 +140,8 @@ def fetch(url: str, *, resolve=socket.getaddrinfo, context: ssl.SSLContext | Non
         raise TransportError(f"cannot fetch client metadata: {error}") from error
     finally:
         watchdog.cancel()
-        conn.close()
+        if conn is not None:
+            conn.close()
     if expired.is_set():  # a read cut short by the watchdog can look like a clean end of file
         raise TransportError("client metadata took too long")
     if len(body) > MAX_BYTES:

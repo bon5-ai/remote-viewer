@@ -40,7 +40,8 @@ claude mcp add --transport http tmux-remote-viewer https://term.example.com/mcp
    Approve this agent at your terminal
        tmux-remote-viewer agent approve K7QM
        Request ID   K7QM
-       Agent        Claude Code (the agent chose this name; it is not verified)
+       Agent        Claude Code
+       Identity     not verified: the agent chose this name
        Returns to   localhost:53172
    ```
 

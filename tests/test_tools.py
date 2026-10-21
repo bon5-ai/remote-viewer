@@ -41,7 +41,7 @@ class ToolCase(unittest.TestCase):
 class TextRuleTests(unittest.TestCase):
     def test_refuses_what_could_drive_the_terminal_or_mislead_a_reviewer(self):
         for text in ("\x1b[201~rm -rf ~", "a\x03", "a\rb", "x\x7f", "ls‮", "ls​", "a b", "",
-                     "\ud800", "\x9b31m"):
+                     "\ud800", "\x9b31m", "rm -rf", "ls　-la"):  # no-break and ideographic spaces
             with self.assertRaises(ToolError, msg=repr(text)):
                 check_text(text, allow_newlines=True)
         with self.assertRaises(ToolError):

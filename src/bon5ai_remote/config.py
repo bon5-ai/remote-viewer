@@ -64,11 +64,18 @@ def is_loopback(host: str) -> bool:
 
 
 def _non_global(host: str) -> bool:
-    """A literal address that is not routable on the internet, and not 0.0.0.0 or ::."""
+    """A literal address that is not routable on the internet, and not 0.0.0.0 or ::.
+
+    An IPv4 address written as IPv6 is judged as the IPv4 address: ::ffff:0.0.0.0 is
+    neither global nor "unspecified" to ipaddress, yet binding it listens on every IPv4
+    interface. Tailscale's 100.64.0.0/10 counts as non-global, so a listener on the
+    tailnet address is allowed; config.example.toml says what that means."""
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
         return False
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
     return not ip.is_global and not ip.is_unspecified and not ip.is_multicast
 
 

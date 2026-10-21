@@ -45,6 +45,13 @@ class ConfigTests(unittest.TestCase):
             self.load('allow_private_listen = true\n[[listener]]\naddress = "0.0.0.0:8095"\n')
         with self.assertRaises(ConfigError):
             self.load('allow_private_listen = true\n[[listener]]\naddress = "8.8.8.8:8095"\n')
+        for address in ("[::ffff:0.0.0.0]:8095", "[::ffff:8.8.8.8]:8095", "[::]:8095"):
+            with self.assertRaises(ConfigError, msg=address):  # ::ffff:0.0.0.0 binds every IPv4 interface
+                self.load(f'allow_private_listen = true\n[[listener]]\naddress = "{address}"\n')
+        # A Tailscale address is allowed, and documented as serving the whole tailnet in the clear.
+        cfg = self.load('allow_private_listen = true\n[[listener]]\naddress = "100.100.100.100:8095"\n'
+                        'public_url = "https://box.example.test/"\n')
+        self.assertEqual(cfg.listeners[0].host, "100.100.100.100")
 
     def test_public_url_must_be_https_unless_loopback(self):
         with self.assertRaisesRegex(ConfigError, "https"):

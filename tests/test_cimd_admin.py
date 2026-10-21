@@ -102,6 +102,38 @@ class MetadataFetchTests(unittest.TestCase):
             cimd.fetch(self.URL, resolve=resolver("93.184.215.14"), connection_class=Dripping, deadline=0.3)
         self.assertLess(time.monotonic() - started, 2)
 
+    def test_the_deadline_covers_the_name_lookup(self):
+        # The watchdog used to start after resolving, so a slow resolver got its own full
+        # budget on top; now whatever the lookup took comes off the connection's.
+        def slow_resolve(host, port, type=None):
+            time.sleep(0.4)
+            return resolver("93.184.215.14")(host, port, type)
+
+        seen = {}
+        with self.assertRaisesRegex(cimd.MetadataError, "too long"):
+            cimd.fetch(self.URL, resolve=slow_resolve, connection_class=connection(FakeResponse(), seen),
+                       deadline=0.3)
+        self.assertEqual(seen, {})  # nothing was connected once the deadline had passed
+
+        class Timed:
+            def __init__(self, host, address, port, context, timeout):
+                seen["timeout"] = timeout
+
+            def request(self, method, target, headers):
+                pass
+
+            def getresponse(self):
+                return FakeResponse(body=b'{"client_id": "x"}')
+
+            def close(self):
+                pass
+
+        def resolve_in_a_moment(host, port, type=None):
+            time.sleep(0.2)
+            return resolver("93.184.215.14")(host, port, type)
+        cimd.fetch(self.URL, resolve=resolve_in_a_moment, connection_class=Timed, deadline=1.0)
+        self.assertLess(seen["timeout"], 0.85)
+
     def test_connects_to_the_checked_address(self):
         seen = {}
         document = cimd.fetch(self.URL, resolve=resolver("93.184.215.14"),

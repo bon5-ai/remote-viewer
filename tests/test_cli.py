@@ -1,5 +1,6 @@
 """The command line's prompts, answered on a real controlling terminal."""
 
+import argparse
 import os
 import pty
 import select
@@ -68,6 +69,46 @@ class ArgumentTests(unittest.TestCase):
     def test_code_ttl(self):
         self.assertEqual(cli.parser().parse_args(["code", "--ttl", "30m"]).ttl, 1800)
         self.assertIsNone(cli.parser().parse_args(["code"]).ttl)  # the gate's code_ttl_seconds
+
+
+class ApproveTests(unittest.TestCase):
+    """Which waiting request `agent approve` picks when no ID is given."""
+
+    def request(self, loopback: bool) -> dict:
+        return {"id": "K7QM", "client": "Claude Code", "verified": False, "clientHost": None,
+                "redirectHost": "localhost:53172" if loopback else "chat.example.test", "loopback": loopback,
+                "age": 20, "expiresIn": 280}
+
+    def approve(self, requests, **args):
+        calls = []
+
+        def admin(cfg, method, path, body=None):
+            calls.append((method, path, body))
+            return {"requests": requests}
+        original = cli.admin
+        cli.admin = admin
+        try:
+            with self.assertRaises(cli.Exit) as caught:  # stops at the scope prompt, or at the ID check
+                cli.cmd_agent_approve(None, argparse.Namespace(id=None, yes=False, scope=None, pane=None, ttl=None,
+                                                               **args))
+        finally:
+            cli.admin = original
+        return str(caught.exception)
+
+    def test_a_lone_request_returning_to_this_machine_is_picked(self):
+        message = self.approve([self.request(loopback=True)])
+        self.assertNotIn("Name the request", message)  # it got as far as asking for a scope
+
+    def test_a_hosted_callback_needs_the_id_from_the_page(self):
+        # Anyone using the hosted service could have started it, so the ID on the page you
+        # opened is the only thing that ties the request to you.
+        message = self.approve([self.request(loopback=False)])
+        self.assertIn("Name the request", message)
+        self.assertIn("hosted service", message)
+
+    def test_describe_marks_hosted_callbacks(self):
+        self.assertIn("anyone using it", cli.describe_request(self.request(loopback=False)))
+        self.assertNotIn("anyone using it", cli.describe_request(self.request(loopback=True)))
 
 
 class SelfCommandTests(unittest.TestCase):

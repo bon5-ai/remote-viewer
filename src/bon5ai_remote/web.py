@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, urlsplit
 import anyio
 from starlette.applications import Starlette
 from starlette.datastructures import Headers
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from starlette.routing import Route, WebSocketRoute
@@ -43,6 +44,13 @@ COOKIE = "bon5ai_remote"
 PENDING_COOKIE = "bon5ai_authorize"
 MAX_CLAIM_BYTES = 1024
 MAX_FORM_BYTES = 8192
+# A wrong viewer code waits this long for its answer, and at most MAX_CLAIMS_IN_FLIGHT
+# claims are in progress at once. That bounds guessing to a few codes a second without
+# ever locking the owner out (see gate.FAILURE_LIMIT): a flood costs the owner a retry a
+# moment later, not ten minutes.
+FAILURE_DELAY = 1.0
+MAX_CLAIMS_IN_FLIGHT = 8
+ALIS_SUBPROTOCOL = "v1.alis"  # the only subprotocol asciinema's player speaks
 METADATA_FETCHES = 4  # client metadata fetches at once, in their own threads (not the shared pool)
 REVALIDATE_SECONDS = 30
 SERVER_NAME = "BON5AI Remote Viewer"
@@ -202,21 +210,41 @@ def build_app(state: State, listener: Listener):
         headers = [cookie(COOKIE, "", 0)] if result["state"] == "ended" else []
         return respond_json(result, headers=headers)
 
+    claims: list[anyio.CapacityLimiter] = []  # made on first use: a limiter needs the event loop
+
     async def claim(request: Request) -> Response:
+        # JSON only, and never from another site: a page elsewhere must not be able to
+        # make its visitors' browsers submit guesses (a form post or text/plain fetch
+        # needs no CORS preflight; this does).
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            return respond_json({"error": "Send the code as JSON."}, 415)
+        if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
+            return respond_json({"error": "Pair from the viewer page itself."}, 403)
         body = await read_body(request, MAX_CLAIM_BYTES)
         try:
             typed = str(json.loads(body or b"").get("code", ""))
         except (ValueError, AttributeError):
             return respond_json({"error": "Enter the code from your terminal."}, 400)
         client = request.scope["bon5ai.client"]
+        if not claims:
+            claims.append(anyio.CapacityLimiter(MAX_CLAIMS_IN_FLIGHT))
         try:
-            token = state.gate.claim(typed, client)
-        except Throttled:
-            log.warning("claim refused: too many wrong codes%s", f" from {client}" if client else "")
-            return respond_json({"error": "Too many wrong codes. Wait a few minutes and try again."}, 429)
-        except InvalidCode as refusal:
-            log.warning("wrong code (%d)%s", refusal.failures, f" from {client}" if client else "")
-            return respond_json({"error": "That code isn't valid or has expired."}, 400)
+            claims[0].acquire_nowait()
+        except anyio.WouldBlock:
+            log.warning("claim refused: too many codes being tried at once")
+            return respond_json({"error": "Too many codes are being tried right now. Try again in a moment."}, 429)
+        try:
+            try:
+                token = state.gate.claim(typed, client)
+            except Throttled:
+                log.warning("claim refused: too many wrong codes from %s", client)
+                return respond_json({"error": "Too many wrong codes. Wait a few minutes and try again."}, 429)
+            except InvalidCode as refusal:
+                log.warning("wrong code (%d)%s", refusal.failures, f" from {client}" if client else "")
+                await anyio.sleep(FAILURE_DELAY)  # the slot stays taken while the answer waits
+                return respond_json({"error": "That code isn't valid or has expired."}, 400)
+        finally:
+            claims[0].release()
         log.info("viewer paired")
         state.audit.record("viewer.paired", client=client or None)
         return respond_json({"ok": True}, headers=[cookie(COOKIE, token, state.cfg.viewer_ttl)])
@@ -273,13 +301,16 @@ def build_app(state: State, listener: Listener):
             if address is None:
                 await ws.close(code=1011)
                 return
+            # Only the handshake goes upstream: no cookie, no origin, no proxy from the
+            # environment, and of the browser's subprotocols only the one the player speaks
+            # (anything else is not even a valid token to the websockets library).
+            offered = ws.scope.get("subprotocols") or []
             try:
-                # Only the handshake goes upstream: no cookie, no origin, no proxy from the environment.
                 upstream = await ws_connect(f"ws://{address[0]}:{address[1]}/ws",
-                                            subprotocols=ws.scope.get("subprotocols") or None, compression=None,
-                                            max_size=None, open_timeout=5, ping_interval=None, proxy=None,
-                                            user_agent_header=None)
-            except (OSError, TimeoutError, InvalidHandshake, InvalidURI):
+                                            subprotocols=[ALIS_SUBPROTOCOL] if ALIS_SUBPROTOCOL in offered else None,
+                                            compression=None, max_size=None, open_timeout=5, ping_interval=None,
+                                            proxy=None, user_agent_header=None)
+            except (OSError, TimeoutError, ValueError, InvalidHandshake, InvalidURI):
                 await ws.close(code=1011)
                 return
             await ws.accept(subprotocol=upstream.subprotocol)
@@ -303,11 +334,20 @@ def build_app(state: State, listener: Listener):
                    Route("/remote.css", static)]  # the authorize page's stylesheet
     if listener.mcp:
         routes += oauth_routes(state, listener, static)
-    return Guard(Starlette(routes=routes), listener, state.cfg.proxy_secret)
+
+    def http_error(request: Request, error: HTTPException) -> Response:
+        # Starlette's own 404/405 pages would carry none of the security headers.
+        return respond(f"{error.detail}\n", error.status_code, headers=(error.headers or {}).items())
+
+    app = Starlette(routes=routes, exception_handlers={HTTPException: http_error})
+    app.router.redirect_slashes = False  # "/remote.js/" must 404, not redirect out of the mount
+    return Guard(app, listener, state.cfg.proxy_secret)
 
 
 async def relay(ws: WebSocket, upstream, still_valid) -> None:
-    """Pass frames both ways, keeping text and binary apart, until either side closes."""
+    """Pass the stream's frames to the browser, keeping text and binary apart, until either
+    side closes. Nothing goes the other way: the stream is one-directional, so whatever a
+    browser sends is read and dropped rather than handed to asciinema's server."""
     async with anyio.create_task_group() as group:
         async def from_browser() -> None:
             try:
@@ -315,10 +355,6 @@ async def relay(ws: WebSocket, upstream, still_valid) -> None:
                     message = await ws.receive()
                     if message["type"] == "websocket.disconnect":
                         break
-                    if message.get("bytes") is not None:
-                        await upstream.send(message["bytes"])
-                    elif message.get("text") is not None:
-                        await upstream.send(message["text"])
             except (ConnectionClosed, WebSocketDisconnect, RuntimeError):
                 pass
             group.cancel_scope.cancel()

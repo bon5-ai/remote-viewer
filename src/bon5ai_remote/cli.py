@@ -31,7 +31,8 @@ from .agents import SCOPE_HELP, SCOPES
 from .config import (CONFIG_ENV, SECRET_ENV, Config, ConfigError, config_dir, ensure_private_dir, is_loopback,
                      load)
 from .gate import stream_up
-from .state import AGENTS_OPTION, PENDING_OPTION, STREAM_OPTION, VIEWERS_OPTION
+from .state import AGENTS_OPTION, PENDING_OPTION, STREAM_OPTION, STREAM_PID_OPTION, VIEWERS_OPTION
+from .stream import owner_alive
 from .tmux import Tmux
 
 MIN_TMUX = (3, 2)
@@ -163,19 +164,24 @@ def configure_session(cfg: Config, tmux: Tmux, cfg_arg: str | None) -> None:
 
 def ensure_stream(cfg: Config, tmux: Tmux) -> None:
     current = tmux.get_option(STREAM_OPTION)
-    if current:
+    pid = tmux.get_option(STREAM_PID_OPTION) or ""
+    if current and pid.isdigit() and owner_alive(int(pid), current):
         host, _, port = current.rpartition(":")
         if port.isdigit() and stream_up((host, int(port))):
             return
     listen = f"127.0.0.1:{free_port()}"
-    cfg.state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ensure_private_dir(cfg.state_dir)
     log_path = cfg.state_dir / "stream.log"
-    with open(log_path, "ab") as log_file:
+    # Created 0600 by the gate, whatever the umask: asciinema's errors can quote the session.
+    fd = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "ab") as log_file:
         # A new session, so the stream outlives this SSH connection, as the tmux session does.
-        subprocess.Popen([sys.executable, "-P", "-m", "bon5ai_remote.stream", "--socket", str(cfg.tmux_socket),
-                          "--session", cfg.session, "--listen", listen],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log_file,
-                         start_new_session=True, close_fds=True)
+        process = subprocess.Popen([sys.executable, "-P", "-m", "bon5ai_remote.stream",
+                                    "--socket", str(cfg.tmux_socket), "--session", cfg.session, "--listen", listen],
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=log_file,
+                                   start_new_session=True, close_fds=True)
+    # The gate trusts the port only while this pid is the wrapper that owns it.
+    tmux.set_option(STREAM_PID_OPTION, str(process.pid))
     tmux.set_option(STREAM_OPTION, listen)
     host, port = listen.split(":")
     for _ in range(30):
@@ -233,7 +239,10 @@ def cmd_code(cfg: Config, args) -> int:
 def describe_request(item: dict) -> str:
     who = (f"{item['client']} (verified: {item['clientHost']})" if item["verified"]
            else f"\"{item['client']}\" (self-registered: the name is not verified)")
-    return f"{item['id']}  {who}, returns to {item['redirectHost']}, {item['age']}s ago"
+    where = item["redirectHost"]
+    if not item.get("loopback", True):
+        where += " (a hosted service: anyone using it could have started this sign-in)"
+    return f"{item['id']}  {who}, returns to {where}, {item['age']}s ago"
 
 
 def choose_scope(args) -> str:
@@ -285,9 +294,11 @@ def cmd_agent_approve(cfg: Config, args) -> int:
         item = next((item for item in requests if item["id"] == wanted), None)
         if item is None:
             raise Exit(f"No waiting request {args.id}.")
-    elif len(requests) == 1 and not args.yes:
-        item = requests[0]
+    elif len(requests) == 1 and not args.yes and requests[0].get("loopback", True):
+        item = requests[0]  # one request, returning to this machine: the usual Claude Code case
     else:
+        # A sign-in that returns to a hosted service could have been started by anyone who
+        # uses that service, so it is approved only by the ID on the page you opened.
         raise Exit("Name the request to approve; it is the ID shown on the sign-in page:\n  "
                    + "\n  ".join(describe_request(item) for item in requests))
     print(describe_request(item))
@@ -373,10 +384,13 @@ def cmd_agent_headers(cfg: Config, args) -> int:
     if sys.stdout.isatty() and not args.force:
         raise Exit("This prints a credential. It is meant to run as an MCP headersHelper, not in a terminal.")
     path = Path(args.file).expanduser()
-    info = path.stat()
-    if info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise Exit(f"{path} must be yours and mode 0600.")
-    token = path.read_text().strip()
+    try:
+        info = path.stat()
+        if info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise Exit(f"{path} must be yours and mode 0600.")
+        token = path.read_text().strip()
+    except OSError as error:
+        raise Exit(f"Cannot read the token file: {error}") from error
     print(json.dumps({"Authorization": f"Bearer {token}"}))
     return 0
 
@@ -465,6 +479,7 @@ ExecStart={exec_start}
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes
+UMask=0077
 
 [Install]
 WantedBy=default.target
@@ -482,6 +497,7 @@ LAUNCHD_PLIST = """\
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>Umask</key><integer>63</integer>
   <key>StandardErrorPath</key><string>{log}</string>
 </dict>
 </plist>
