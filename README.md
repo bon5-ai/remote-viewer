@@ -12,15 +12,19 @@ Nobody gets in without the person at the terminal:
   shows it for as long as it has access, and one key revokes it.
 
 ```
-                                   ┌──────────────── your machine ────────────────────────────┐
- phone / browser ──HTTPS──┐        │                                                          │
-                          ├──► proxy or tunnel ──► gate (127.0.0.1:8095) ──► asciinema stream ┐ │
- agent (MCP + OAuth) ─────┘        │                  │  ▲                    (read-only      │ │
-                                   │      admin socket│  │ capture-pane /      tmux client)   │ │
-                                   │        (0600)    │  │ send-keys                          ▼ │
-                                   │   you: share,    │  └─────────── tmux server (its own socket)
-                                   │   code, approve ─┘                    session "share"    │
-                                   └──────────────────────────────────────────────────────────┘
+                             ┌───────────────────── your machine ──────────────────────┐
+ phone / browser ──HTTPS──┐  │                                                         │
+                          ├──┼─► proxy or tunnel ──► gate (127.0.0.1:8095) ──┐         │
+ agent (MCP + OAuth) ─────┘  │                       │  ▲                    ▼         │
+                             │          admin socket │  │            asciinema stream  │
+                             │                (0600) │  │               (read-only     │
+                             │           you: share, │  │              tmux client)    │
+                             │        code, approve ─┘  │ capture-pane /     │         │
+                             │                          │ send-keys          ▼         │
+                             │                          └────────────── tmux server    │
+                             │                                       (its own socket)  │
+                             │                                        session "share"  │
+                             └─────────────────────────────────────────────────────────┘
 ```
 
 ## Requirements
@@ -59,18 +63,90 @@ public URL (see [Hosting](#hosting)).
 | end | exit the last shell. Viewers see "Session ended" and agents lose access. |
 | revoke every agent | `prefix + X` |
 
-### Add an agent
+## Add an agent
+
+Agents sign in with OAuth, and you approve each sign-in at the terminal. Claude Code on
+this machine reaches the gate on loopback. Claude, ChatGPT and Grok Bot call from their
+provider's cloud, so they also need a public `public_url` (see [Hosting](#hosting)) and
+their callback in `allowed_redirect_uris`, set before the first sign-in because
+restarting the gate signs every agent out:
+
+```toml
+# ~/.config/bon5ai-remote/config.toml
+allowed_redirect_uris = [
+  "https://claude.ai/api/mcp/auth_callback",                # Claude
+  "https://chatgpt.com/connector_platform_oauth_redirect",  # ChatGPT
+  "https://www.cursor.com/agents/mcp/oauth/callback",        # Grok Bot
+]
+```
+
+```bash
+systemctl --user restart tmux-remote-viewer
+```
+
+A hosted callback serves every user of that service, so anyone can start a sign-in to
+your gate: **approve only a request ID that is on a page you opened yourself.** For a
+hosted callback, `agent approve` always needs the ID.
+
+### Claude Code
 
 ```bash
 claude mcp add --transport http tmux-remote-viewer http://127.0.0.1:8095/mcp
 ```
 
-1. In Claude Code, run `/mcp` and choose **Authenticate**. A page opens with a request ID
-   such as `K7QM`.
-2. In your shell, run `tmux-remote-viewer agent approve K7QM`, then pick a scope and a pane.
+1. Run `/mcp`, choose **tmux-remote-viewer**, then **Authenticate**. A page opens with a
+   request ID such as `K7QM`.
+2. In your shell, run `tmux-remote-viewer agent approve K7QM`, then pick a scope and a
+   pane. Claude Code finishes signing in, and the tmux status line shows the agent.
 
-Details are in [docs/agents.md](docs/agents.md), including clients that can't open a
-browser.
+Details are in [docs/agents.md](docs/agents.md), including a token file for `claude -p`
+and CI, and clients that can't open a browser.
+
+### Claude
+
+Claude on the web, in the desktop and mobile apps, and in Cowork share one connector.
+Every plan can add one. On Team and Enterprise, an Owner adds it under **Organization
+settings → Connectors**, and each member then clicks **Connect**.
+
+1. Go to **Customize → Connectors**, then **Add custom connector**.
+2. Name it and enter `https://term.example.com/mcp` as the MCP server URL. If the dialog
+   asks, keep **Sign in now** and **Use Claude's published identity**: the gate reads
+   Claude's client metadata document, so the approval shows `verified: claude.ai`.
+3. Click **Add** and sign in. The gate's page opens with a request ID; approve it in your
+   shell as above, and Claude lists the tools.
+4. In a chat, click **+**, then **Connectors**, and turn it on. Claude asks before a tool
+   runs; **Always allow** skips that for one tool.
+
+### ChatGPT
+
+ChatGPT needs a paid plan; in a workspace an owner may have to allow custom servers first.
+
+1. Open [chatgpt.com/plugins](https://chatgpt.com/plugins), click **+**, then
+   **Add custom MCP server**. Older builds have it under Settings → Connectors →
+   Advanced → **Developer mode**, then **Create**.
+2. Name it, enter `https://term.example.com/mcp` as the server URL, choose OAuth as the
+   authentication, and accept the warning about unverified servers.
+3. ChatGPT opens the gate's sign-in page with a request ID. Approve it in your shell as
+   above, and ChatGPT lists the tools.
+4. In a chat, type `@` and pick the server. `terminal_info`, `read_screen` and `wait_for`
+   are annotated read-only, so ChatGPT runs them without asking and confirms the others
+   with you.
+
+### Grok Bot
+
+Grok Bot has no settings form for custom servers. Ask it in chat, with the words "custom
+MCP server" (otherwise it installs a catalog plugin instead):
+
+> Add a custom MCP server named tmux-remote-viewer with the URL https://term.example.com/mcp
+
+1. The bot repeats the name and URL and asks you to confirm, then posts a connect card.
+   Click **Authorize**.
+2. The gate's sign-in page opens with a request ID. Approve it in your shell as above.
+3. The card completes the sign-in and the bot lists the tools. The server appears under
+   Settings → Plugins → **Yours**; type `@` in a chat to attach it.
+
+Grok Bot also registers a `cursor://` callback. The gate drops it and keeps the https one,
+so the entry above is all it needs.
 
 ## Hosting
 

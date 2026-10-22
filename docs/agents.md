@@ -94,21 +94,51 @@ and either Dynamic Client Registration or Client ID Metadata Documents. A client
 send a fixed header can use `Authorization: Bearer <token>` from `agent token`.
 
 **Hosted clients** (web chat connectors) call from their provider's cloud. They need a
-public `public_url`, and their callback URL listed in `allowed_redirect_uris`. That
-callback serves every user of that service, so the request ID check at approval is the
-only thing that tells your sign-in apart from a stranger's.
+public `public_url`, and their callback URL listed in `allowed_redirect_uris` before the
+first sign-in, since restarting the gate signs every agent out:
+
+```toml
+allowed_redirect_uris = [
+  "https://claude.ai/api/mcp/auth_callback",                # Claude
+  "https://chatgpt.com/connector_platform_oauth_redirect",  # ChatGPT
+  "https://www.cursor.com/agents/mcp/oauth/callback",        # Grok Bot
+]
+```
+
+That callback serves every user of that service, so the request ID check at approval is
+the only thing that tells your sign-in apart from a stranger's. For a hosted callback,
+`agent approve` never picks a waiting request on its own; give it the ID.
 
 A registration may list callbacks the gate can't allow, such as an app's own URL scheme.
 The gate keeps the loopback and allowlisted ones, drops the rest, and returns the kept
 list in its response. It refuses the registration only when none are left.
 
-**Grok Bot** has no settings form for MCP servers. Ask it in chat: `Add this MCP server:
-https://your-machine.example.com/mcp`. It signs in with OAuth only, so it can't use a token
-from `agent token`. Allow its https callback:
+**Claude** (web, desktop, mobile and Cowork). Go to **Customize → Connectors**, then
+**Add custom connector**; on Team and Enterprise an Owner adds it under **Organization
+settings → Connectors** and members click **Connect**. Enter `https://term.example.com/mcp`
+as the MCP server URL and, if the dialog asks, keep **Sign in now** and **Use Claude's
+published identity**. The gate advertises `client_id_metadata_document_supported` and a
+public token endpoint, which is what Claude requires to use its Client ID Metadata
+Document; the gate fetches that document, and the approval line reads
+`Claude (verified: claude.ai)`. Without CIMD, Claude registers dynamically instead.
+Approve the request ID at the terminal, then turn the connector on in a chat under
+**+ → Connectors**.
 
-```toml
-allowed_redirect_uris = ["https://www.cursor.com/agents/mcp/oauth/callback"]
-```
+**ChatGPT.** At [chatgpt.com/plugins](https://chatgpt.com/plugins) choose **+**, then
+**Add custom MCP server**; enter `https://term.example.com/mcp` as the server URL and
+OAuth as the authentication. Older builds have this under Settings → Connectors →
+Advanced → **Developer mode**. ChatGPT opens the gate's sign-in page; approve the request
+ID at the terminal, and ChatGPT lists the tools. Type `@` in a chat to use it. ChatGPT
+uses the stable callback above because the gate returns `iss` in every authorization
+response (RFC 9207). The observe tools are annotated read-only, so ChatGPT runs them
+without asking and confirms each write with you.
+
+**Grok Bot** has no settings form for MCP servers. Ask it in chat, with the words "custom
+MCP server" so it doesn't install a catalog plugin instead:
+`Add a custom MCP server named tmux-remote-viewer with the URL https://term.example.com/mcp`.
+It confirms the name and URL, then posts a connect card whose **Authorize** opens the
+gate's sign-in page. It signs in with OAuth only, so it can't use a token from
+`agent token`. Its registration also lists a `cursor://` callback, which the gate drops.
 
 ## Managing grants
 
