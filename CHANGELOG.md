@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `viewer_resize = true` lets a viewer's page size the session to its own screen while
+  the host is detached and that browser is the only viewer watching. − and + buttons
+  next to the full-screen button set the text size, and the page asks for the grid that
+  fills the screen at that size. When the host attaches or a second viewer starts
+  watching, the session goes back to the host's size. Off by default.
+- A viewer that closes its page is counted out at once. The gate used to wait for
+  asciinema to answer the websocket close, which it never does, so the status line's
+  viewer count lagged 10 seconds behind.
 - **Security.** The commands the gate writes for tmux, the service and Claude Code's
   `headersHelper` run Python with `-P`, so a `bon5ai_remote` package planted in the
   working directory (a cloned repository, say) can no longer be imported in place of the

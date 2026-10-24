@@ -1,4 +1,4 @@
-"""The gate's shared state: tmux, viewer pairing, agent grants and the audit log."""
+"""The gate's shared state: tmux, viewer pairing and sizing, agent grants and the audit log."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from .agents import AgentAuth, Grant
 from .audit import Audit
 from .config import Config, ConfigError, is_loopback, parse_address
 from .gate import Gate
+from .sizing import Sizer
 from .tmux import Tmux
 
 STREAM_OPTION = "@bon5ai_stream"
@@ -34,6 +35,7 @@ class State:
         self.gate = Gate(code_ttl=cfg.code_ttl, viewer_ttl=cfg.viewer_ttl, session_lookup=self.tmux.session_key,
                          host_attached=self.tmux.host_attached, stream_address=self.stream_address,
                          on_viewers=self._viewers_changed, on_guessing=self._guessing, **extra)
+        self.sizer = Sizer(self.tmux, self.gate, self.audit, enabled=cfg.viewer_resize)
         if fetch_metadata is None and cfg.client_metadata_documents:
             fetch_metadata = cimd.fetch
         self.agents = AgentAuth(agent_ttl=cfg.agent_ttl, access_ttl=cfg.access_token_ttl,
@@ -76,6 +78,7 @@ class State:
         # terminal can see when someone is watching.
         if self.tmux.session_key() == session:
             self.tmux.set_option(VIEWERS_OPTION, str(count))
+        self.sizer.reconcile()  # a viewer's size holds only while it is the one watching
 
     def _guessing(self, failures: int) -> None:
         self.audit.record("viewer.guessing", failures=failures)

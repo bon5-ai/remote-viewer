@@ -9,6 +9,7 @@ from pathlib import Path
 
 from bon5ai_remote import stream
 from bon5ai_remote.tmux import Tmux
+from helpers import FakeTmux
 
 
 def runner(stdout, returncode=0):
@@ -39,6 +40,20 @@ class StreamSizeTests(unittest.TestCase):
         def run(*args, **kwargs):
             raise FileNotFoundError("tmux")
         self.assertIsNone(stream.client_size(self.tmux(run)))
+
+    def test_follows_the_window_unless_the_gate_asked_and_its_client_is_alone(self):
+        tmux = FakeTmux()
+        tmux.window = (100, 30, "on")
+        self.assertEqual(stream.wanted_size(tmux), (100, 31))
+        tmux.options[stream.SIZE_OPTION] = "60x20"
+        self.assertEqual(stream.wanted_size(tmux), (100, 31))  # the host's terminal sizes the window
+        tmux.host = False
+        self.assertEqual(stream.wanted_size(tmux), (60, 20))
+        for bad in ("0x20", "60x", "60x20 ", "60X20", "123456x20", ""):
+            tmux.options[stream.SIZE_OPTION] = bad
+            self.assertEqual(stream.wanted_size(tmux), (100, 31), bad)
+        tmux.session = None
+        self.assertIsNone(stream.wanted_size(tmux))
 
     def test_command_attaches_read_only_to_the_dedicated_socket(self):
         argv = stream.command(Path("/run/a dir/tmux.sock"), "share", "127.0.0.1:4100")

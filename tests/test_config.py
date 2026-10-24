@@ -32,6 +32,12 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual((listener.host, listener.port), ("127.0.0.1", 8095))
         self.assertEqual(listener.public_url, "http://127.0.0.1:8095/")
 
+    def test_viewer_resize_is_off_unless_turned_on(self):
+        self.assertFalse(load(env=self.env).viewer_resize)
+        self.assertTrue(self.load("viewer_resize = true\n").viewer_resize)
+        with self.assertRaisesRegex(ConfigError, "viewer_resize must be true or false"):
+            self.load('viewer_resize = "yes"\n')
+
     def test_listener_must_be_loopback(self):
         with self.assertRaisesRegex(ConfigError, "must be loopback"):
             self.load('[[listener]]\naddress = "0.0.0.0:8095"\n')

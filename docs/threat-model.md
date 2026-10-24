@@ -11,7 +11,7 @@
 | Actor | Trusted with |
 |---|---|
 | The person at the terminal (the gate's Unix user) | everything. They mint codes, approve agents and revoke. |
-| A paired browser | read-only viewing of one session, until it ends or 12 hours pass |
+| A paired browser | read-only viewing of one session, until it ends or 12 hours pass. With `viewer_resize`, also the session's size while the host is away and it is the only viewer watching |
 | A paired agent | the scope and pane the person approved, until it is revoked or expires, the session ends, or the gate restarts |
 | Anyone who can reach the public URL | nothing. They can load the pairing page and start a sign-in. |
 | Other local Unix users | nothing. Runtime files are 0700/0600, and the admin socket checks the peer's uid on Linux. |
@@ -39,6 +39,7 @@
 | Starving the gate with slow metadata servers | Metadata fetches run in their own pool of 4 threads, separate from the requests the gate serves. The 5 s deadline starts before the name lookup; the lookup itself can't be interrupted, so a slow resolver holds one of the 4 threads for its own timeout, but nothing after it. A URL that does not answer isn't fetched again for a minute. Error responses and invalid documents are not cached, so one bad URL cannot block the rest of its host. |
 | Someone else revoking a token | `/revoke` ends a grant only when `client_id` is the client the token was issued to. An unknown token gets an empty 200. A token from `agent token` has no OAuth client, so whoever holds it can end it. |
 | Clickjacking, script injection | A strict CSP with `frame-ancestors 'none'` on every response, error pages included. The sign-in page has no inline script and renders values with `textContent`. `/claim` takes JSON only and refuses cross-site requests, so no other page can make a browser submit guesses. |
+| A viewer disturbing the session through its size (`viewer_resize`) | Off by default. A size is applied only while no writable client is attached and exactly one stream is open, that of the viewer who asked; the moment the host attaches, tmux sizes the session to the host's terminal again. Sizes are held between 20×8 and 400×150, and the stream wrapper applies at most one a second, however often a viewer asks. `/size` takes JSON from the viewer page only, like `/claim`. The audit log records when a viewer's size takes over and when it ends. A resize sends programs in the session SIGWINCH and nothing else: no input reaches the terminal. |
 | Reaching asciinema's server through the relay | The relay forwards the handshake and the stream's own subprotocol upstream, and the stream's frames downstream. Frames a browser sends are read and dropped. |
 | Not noticing | The status line shows viewers, agents and pending sign-ins. `prefix + X` revokes every agent. An append-only 0600 audit log records approvals, revocations, evicted sign-ins, guessing and every write with its text. |
 

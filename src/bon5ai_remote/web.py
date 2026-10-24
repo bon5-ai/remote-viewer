@@ -43,6 +43,7 @@ log = logging.getLogger("bon5ai_remote")
 COOKIE = "bon5ai_remote"
 PENDING_COOKIE = "bon5ai_authorize"
 MAX_CLAIM_BYTES = 1024
+MAX_SIZE_BYTES = 256
 MAX_FORM_BYTES = 8192
 # A wrong viewer code waits this long for its answer, and at most MAX_CLAIMS_IN_FLIGHT
 # claims are in progress at once. That bounds guessing to a few codes a second without
@@ -202,12 +203,21 @@ def build_app(state: State, listener: Listener):
     def token_of(request) -> str:
         return request.cookies.get(COOKIE, "")
 
+    def json_body(request: Request) -> bool:
+        return request.headers.get("content-type", "").split(";", 1)[0].strip().lower() == "application/json"
+
+    def same_site(request: Request) -> bool:
+        return request.headers.get("sec-fetch-site", "same-origin") in ("same-origin", "none")
+
     # ---- viewer ----------------------------------------------------------------------------
     def status(request: Request) -> Response:
-        result = state.gate.status(token_of(request))
+        token = token_of(request)
+        result = state.gate.status(token)
         if result is None:
             return respond_json({"state": "unpaired"}, 401)
         headers = [cookie(COOKIE, "", 0)] if result["state"] == "ended" else []
+        if state.cfg.viewer_resize and result["state"] in ("live", "host-away"):
+            result["resize"] = state.sizer.describe(token)
         return respond_json(result, headers=headers)
 
     claims: list[anyio.CapacityLimiter] = []  # made on first use: a limiter needs the event loop
@@ -216,9 +226,9 @@ def build_app(state: State, listener: Listener):
         # JSON only, and never from another site: a page elsewhere must not be able to
         # make its visitors' browsers submit guesses (a form post or text/plain fetch
         # needs no CORS preflight; this does).
-        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+        if not json_body(request):
             return respond_json({"error": "Send the code as JSON."}, 415)
-        if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
+        if not same_site(request):
             return respond_json({"error": "Pair from the viewer page itself."}, 403)
         body = await read_body(request, MAX_CLAIM_BYTES)
         try:
@@ -252,6 +262,29 @@ def build_app(state: State, listener: Listener):
     async def leave(request: Request) -> Response:
         state.gate.revoke(token_of(request))
         return respond_json({"state": "unpaired"}, headers=[cookie(COOKIE, "", 0)])
+
+    async def size(request: Request) -> Response:
+        # The terminal size this viewer's page wants (viewer_resize). It changes the session,
+        # so like a claim it is JSON from the page only.
+        if not json_body(request):
+            return respond_json({"error": "Send the size as JSON."}, 415)
+        if not same_site(request):
+            return respond_json({"error": "Size the terminal from the viewer page itself."}, 403)
+        token = token_of(request)
+        if await anyio.to_thread.run_sync(state.gate.live_viewer_session, token) is None:
+            return respond_json({"state": "unpaired"}, 401)
+        body = await read_body(request, MAX_SIZE_BYTES)
+        try:
+            data = json.loads(body or b"")
+            cols, rows = data["cols"], data["rows"]
+        except (ValueError, TypeError, KeyError):
+            cols = rows = None
+        if not all(isinstance(value, int) and not isinstance(value, bool) for value in (cols, rows)):
+            return respond_json({"error": "Send whole numbers of columns and rows."}, 400)
+        result = await anyio.to_thread.run_sync(state.sizer.request, token, cols, rows)
+        if result is None:
+            return respond_json({"state": "unpaired"}, 401)
+        return respond_json(result)
 
     def player_asset(request: Request) -> Response:
         if state.gate.live_viewer_session(token_of(request)) is None:
@@ -292,7 +325,7 @@ def build_app(state: State, listener: Listener):
         if session is None or (origin is not None and origin not in allowed_origins(ws.scope)):
             await ws.close(code=1008)
             return
-        if not await anyio.to_thread.run_sync(state.gate.open_stream, session):
+        if not await anyio.to_thread.run_sync(state.gate.open_stream, session, token):
             await ws.close(code=1013)
             return
         upstream = None
@@ -317,9 +350,11 @@ def build_app(state: State, listener: Listener):
             await relay(ws, upstream, lambda: state.gate.live_viewer_session(token) == session)
         finally:
             with anyio.CancelScope(shield=True):  # a cancelled relay must still count the viewer out
+                # First: asciinema never answers a close, so closing upstream waits out its 10 s
+                # timeout, and the badge and a viewer's size (sizing.py) would lag behind.
+                await anyio.to_thread.run_sync(state.gate.close_stream, session, token)
                 if upstream is not None:
                     await upstream.close()
-                await anyio.to_thread.run_sync(state.gate.close_stream, session)
 
     routes = []
     if listener.viewer:
@@ -329,6 +364,8 @@ def build_app(state: State, listener: Listener):
                    Route("/player.css", player_asset), Route("/player-fonts.css", player_fonts),
                    Route("/{name:str}.woff2", symbol_font),
                    WebSocketRoute("/ws", websocket)]
+        if state.cfg.viewer_resize:
+            routes.append(Route("/size", size, methods=["POST"]))
     else:
         routes += [Route("/", lambda request: respond(f"{SERVER_NAME}: this address serves agents at /mcp.\n")),
                    Route("/remote.css", static)]  # the authorize page's stylesheet

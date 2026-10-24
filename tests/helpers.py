@@ -8,6 +8,7 @@ import hashlib
 import json
 import socket
 import threading
+import time
 from pathlib import Path
 
 from bon5ai_remote.audit import Audit
@@ -42,6 +43,7 @@ class FakeTmux:
     def __init__(self):
         self.session = "$1@100"
         self.host = True
+        self.window = (120, 39, "on")  # the current window, as window_size reports it
         self.human = None
         self.options: dict[str, str] = {}
         self.messages: list[str] = []
@@ -58,6 +60,12 @@ class FakeTmux:
 
     def host_attached(self):
         return self.host
+
+    def client_count(self):
+        return 1 + self.host  # the stream's hidden client, and the host's terminal
+
+    def window_size(self):
+        return self.window if self.session else None
 
     def last_human_input(self):
         return self.human
@@ -169,6 +177,7 @@ class FakeStream:
         self.address = self.sock.getsockname()
         self.requests: list[str] = []
         self.inbound: list[bytes] = []  # bytes received on /ws after the handshake
+        self.linger = 0.0  # seconds to hold /ws open after the gate's close frame, as asciinema does
         threading.Thread(target=self.serve, daemon=True).start()
 
     def serve(self):
@@ -201,6 +210,7 @@ class FakeStream:
                     data = conn.recv(1024)
                     if data:
                         self.inbound.append(data)
+                    time.sleep(self.linger)
                 except OSError:
                     pass
             elif path == "/":

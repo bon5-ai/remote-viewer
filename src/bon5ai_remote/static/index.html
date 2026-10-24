@@ -25,14 +25,23 @@
 <section id="view" class="rm-view" hidden>
   <div id="player" class="rm-player"></div>
   <p id="notice" class="rm-notice" role="status" hidden></p>
-  <button id="fullscreen" class="rm-fs" type="button" aria-label="Enter full screen" aria-pressed="false" hidden>
-    <svg class="rm-fs-enter" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>
-    </svg>
-    <svg class="rm-fs-exit" viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/>
-    </svg>
-  </button>
+  <div class="rm-tools">
+    <button id="smaller" class="rm-tool" type="button" aria-label="Smaller text" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg>
+    </button>
+    <button id="larger" class="rm-tool" type="button" aria-label="Larger text" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12M12 6v12"/></svg>
+    </button>
+    <button id="fullscreen" class="rm-tool rm-fs" type="button" aria-label="Enter full screen" aria-pressed="false"
+            hidden>
+      <svg class="rm-fs-enter" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>
+      </svg>
+      <svg class="rm-fs-exit" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/>
+      </svg>
+    </button>
+  </div>
 </section>
 
 <main id="ended" class="rm-card" hidden>

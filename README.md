@@ -215,6 +215,11 @@ annotated [config.example.toml](config.example.toml), and copy it to
   tmux client attached with `read-only,ignore-size`.
 - **Sizing.** A small wrapper keeps asciinema's terminal the size of the tmux window, so
   viewers never see tmux's dotted margins or a cropped screen.
+- **Fitting the viewer.** With `viewer_resize = true`, a viewer's page sizes the session
+  to its own screen while you are detached and it is the only viewer watching, so a phone
+  gets a grid of its own shape instead of a letterboxed copy of yours. Its − and + buttons
+  set the text size. When you attach, or a second viewer starts watching, the session goes
+  back to your size.
 - **The page.** The gate serves the page, proxies asciinema's own player (so player and
   stream always match), and relays the WebSocket. The cookie and Origin are checked
   first, and only the handshake headers go upstream.

@@ -125,12 +125,40 @@ class GateTests(unittest.TestCase):
 
     def test_stream_limit_and_viewer_count(self):
         session = self.fake.session
+        token = self.gate.claim(self.gate.mint())
         for _ in range(gate.MAX_STREAMS):
-            self.assertTrue(self.gate.open_stream(session))
-        self.assertFalse(self.gate.open_stream(session))
-        self.gate.close_stream(session)
+            self.assertTrue(self.gate.open_stream(session, token))
+        self.assertFalse(self.gate.open_stream(session, token))
+        self.gate.close_stream(session, token)
         self.assertEqual(self.fake.viewer_counts, [1, 2, 3, 4, 3])
         self.assertEqual(self.gate.viewer_count(), 3)
+
+    def test_only_the_one_watching_viewer_has_a_size(self):
+        session = self.fake.session
+        first, second = self.gate.claim(self.gate.mint()), self.gate.claim(self.gate.mint())
+        self.assertTrue(self.gate.request_size(first, (60, 30)))
+        self.assertTrue(self.gate.request_size(second, (100, 40)))
+        self.assertFalse(self.gate.request_size("not-a-viewer", (60, 30)))
+        self.assertIsNone(self.gate.sole_viewer_size(session))  # nobody is watching yet
+        self.gate.open_stream(session, first)
+        self.assertEqual(self.gate.sole_viewer_size(session), (60, 30))
+        self.assertEqual(self.gate.sole_viewer_size(session, first), (60, 30))
+        self.assertIsNone(self.gate.sole_viewer_size(session, second))  # paired, but not the one watching
+        self.gate.open_stream(session, second)
+        self.assertIsNone(self.gate.sole_viewer_size(session))  # two watching: nobody's size
+        self.gate.close_stream(session, first)
+        self.assertEqual(self.gate.sole_viewer_size(session), (100, 40))
+        self.gate.revoke(second)
+        self.assertIsNone(self.gate.sole_viewer_size(session))  # a revoked viewer's size goes with it
+        self.assertIsNone(self.gate.requested_size(second))
+
+    def test_a_size_expires_with_its_viewer(self):
+        token = self.gate.claim(self.gate.mint())
+        self.gate.request_size(token, (60, 30))
+        self.gate.open_stream(self.fake.session, token)
+        self.clock.now += 3601
+        self.assertIsNone(self.gate.sole_viewer_size(self.fake.session))
+        self.assertIsNone(self.gate.requested_size(token))
 
 
 class SymbolFontTests(unittest.TestCase):

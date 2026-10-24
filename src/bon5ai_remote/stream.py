@@ -8,6 +8,12 @@ whenever the window changes. On each resize asciinema gets SIGWINCH, resizes the
 hidden read-only tmux client to match, and streams a resize event. The browser
 player then re-fits the new grid to the viewport.
 
+The hidden client is ignore-size only while another client is attached. When it is the
+only one (the host is away), tmux sizes the window to it. With ``viewer_resize`` on, the
+gate uses that to give the session a viewer's size (see sizing.py): it puts the size in
+the session option SIZE_OPTION, and while the hidden client is alone, the wrapper sizes
+asciinema's terminal to that instead of to the window, and the window follows.
+
 ``tmux-remote-viewer share`` starts this in its own session, so it outlives the SSH
 connection. It exits when asciinema does, which happens when the tmux session
 ends. Its pty output, a copy of the session, is read and discarded.
@@ -26,6 +32,7 @@ import argparse
 import fcntl
 import os
 import pty
+import re
 import select
 import shlex
 import signal
@@ -40,6 +47,8 @@ from .tmux import Tmux
 
 POLL_SECONDS = 1.0
 STOP_GRACE_SECONDS = 3.0
+SIZE_OPTION = "@bon5ai_stream_size"
+SIZE_VALUE = re.compile(r"([1-9]\d{0,4})x([1-9]\d{0,4})")
 
 
 class Stop(Exception):
@@ -64,6 +73,26 @@ def client_size(tmux: Tmux) -> tuple[int, int] | None:
         return None
     width, height, status = size
     return width, height + status_lines(status)
+
+
+def parse_size(value: str | None) -> tuple[int, int] | None:
+    """(cols, rows) from a "COLSxROWS" option value, or None."""
+    match = SIZE_VALUE.fullmatch(value or "")
+    return (int(match[1]), int(match[2])) if match else None
+
+
+def format_size(size: tuple[int, int]) -> str:
+    return f"{size[0]}x{size[1]}"
+
+
+def wanted_size(tmux: Tmux) -> tuple[int, int] | None:
+    """(cols, rows) to give asciinema's terminal: the window's, or the size the gate asked
+    for while the hidden client is the only one attached (then tmux sizes the window to it)."""
+    size = client_size(tmux)
+    asked = parse_size(tmux.get_option(SIZE_OPTION)) if size else None
+    if asked and tmux.client_count() == 1:
+        return asked
+    return size
 
 
 def set_size(fd: int, size: tuple[int, int]) -> None:
@@ -146,7 +175,7 @@ def command(socket_path: Path, session: str, listen: str) -> list[str]:
 
 def run(socket_path: Path, session: str, listen: str) -> int:
     tmux = Tmux(socket_path, session)
-    size = client_size(tmux)
+    size = wanted_size(tmux)
     if size is None:
         print(f"tmux-remote-viewer stream: no tmux session named '{session}'", file=sys.stderr)
         return 1
@@ -175,7 +204,7 @@ def run(socket_path: Path, session: str, listen: str) -> int:
                 break
             if time.monotonic() - checked >= POLL_SECONDS:
                 checked = time.monotonic()
-                current = client_size(tmux)
+                current = wanted_size(tmux)
                 if current and current != size:
                     set_size(master, current)
                     size = current

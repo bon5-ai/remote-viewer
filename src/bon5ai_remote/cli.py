@@ -458,6 +458,7 @@ def cmd_config(cfg: Config, args) -> int:
     print(f"admin socket  {cfg.admin_socket}")
     print(f"audit log     {cfg.audit_log}")
     print(f"proxy secret  {'set' if cfg.proxy_secret else 'not set'}")
+    print(f"viewer resize {'on' if cfg.viewer_resize else 'off'}")
     for listener in cfg.listeners:
         print(f"listener      {listener.name} → {listener.public_url} viewer={listener.viewer} mcp={listener.mcp}"
               f" proxy_header={listener.proxy_header or '-'} allowed_hosts={','.join(listener.allowed_hosts) or '-'}")

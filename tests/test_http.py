@@ -47,6 +47,7 @@ class WithLifespan:
 
 class ListenerCase(unittest.TestCase):
     listener_overrides: dict = {}
+    config_overrides: dict = {}
     proxy_secret = ""
 
     def setUp(self):
@@ -57,7 +58,8 @@ class ListenerCase(unittest.TestCase):
         self.tmux.options["@bon5ai_stream_pid"] = "4242"  # make_state's owner check says it is ours
         self.listener = make_listener(**self.listener_overrides)
         self.audit_path = Path(self.tmp.name) / "audit.jsonl"
-        self.state = make_state(make_config(listeners=[self.listener], proxy_secret=self.proxy_secret),
+        self.state = make_state(make_config(listeners=[self.listener], proxy_secret=self.proxy_secret,
+                                            **self.config_overrides),
                                 self.tmux, audit_path=self.audit_path)
         manager = StreamableHTTPSessionManager(build_server(self.state), json_response=True, stateless=True,
                                                security_settings=TransportSecuritySettings(
@@ -165,6 +167,13 @@ class ViewerTests(ListenerCase):
         self.pair()
         self.assertEqual(self.client.get("/remote/status").json(), {"state": "live", "viewers": 0})
 
+    def test_viewers_cannot_size_the_session_unless_it_is_turned_on(self):
+        self.pair()
+        self.tmux.host = False
+        self.assertEqual(self.client.post("/remote/size", json={"cols": 60, "rows": 30}).status_code, 404)
+        self.assertNotIn("resize", self.client.get("/remote/status").json())
+        self.assertNotIn("@bon5ai_stream_size", self.tmux.options)
+
     def test_wrong_code(self):
         response = self.client.post("/remote/claim", json={"code": "AAAA-AAAA"})
         self.assertEqual(response.status_code, 400)
@@ -260,6 +269,74 @@ class ViewerTests(ListenerCase):
                 break
             time.sleep(0.02)
         self.assertEqual(self.tmux.options["@bon5ai_viewers"], "0")
+
+    def test_a_viewer_is_counted_out_without_waiting_for_asciinema(self):
+        # asciinema doesn't answer a close frame; the count (and a viewer's size) must not wait for it.
+        self.stream.linger = 2.0
+        counted = []
+        on_viewers = self.state.gate.on_viewers
+        self.state.gate.on_viewers = lambda session, count: (counted.append((count, time.monotonic())),
+                                                             on_viewers(session, count))
+        cookie = self.pair().split(";")[0]
+        with self.client.websocket_connect("/remote/ws", subprotocols=["v1.alis"],
+                                           headers={**WS_HOST, "cookie": cookie, "origin": HOST}) as ws:
+            ws.receive_bytes()
+            closed = time.monotonic()  # leaving the block closes the socket (and waits for the relay to end)
+        counted_out = [at for count, at in counted if count == 0]
+        self.assertEqual(len(counted_out), 1)
+        self.assertLess(counted_out[0] - closed, 1.0)
+
+
+class ViewerResizeTests(ListenerCase):
+    config_overrides = {"viewer_resize": True}
+    LIMITS = {"min": [20, 8], "max": [400, 150]}
+
+    def setUp(self):
+        super().setUp()
+        self.tmux.host = False
+
+    def test_size_takes_json_from_a_viewer_page_only(self):
+        self.assertEqual(self.client.post("/remote/size", json={"cols": 60, "rows": 30}).status_code, 401)
+        self.pair()
+        response = self.client.post("/remote/size", content=json.dumps({"cols": 60, "rows": 30}),
+                                    headers={"content-type": "text/plain"})
+        self.assertEqual(response.status_code, 415)
+        response = self.client.post("/remote/size", json={"cols": 60, "rows": 30},
+                                    headers={"sec-fetch-site": "cross-site"})
+        self.assertEqual(response.status_code, 403)
+        for bad in ({"cols": "60", "rows": 30}, {"cols": 60}, {"cols": True, "rows": 30}, {"cols": 60.0, "rows": 30},
+                    [60, 30], "60x30"):
+            self.assertEqual(self.client.post("/remote/size", json=bad).status_code, 400, bad)
+        self.assertEqual(self.client.post("/remote/size", content=b"{" * 300,
+                                          headers={"content-type": "application/json"}).status_code, 400)
+        self.assertNotIn("@bon5ai_stream_size", self.tmux.options)
+
+    def test_the_one_watching_viewer_sizes_the_session(self):
+        cookie = self.pair().split(";")[0]
+        self.assertEqual(self.client.get("/remote/status").json()["resize"],
+                         {"active": False, "size": None, **self.LIMITS})
+        with self.client.websocket_connect("/remote/ws", subprotocols=["v1.alis"],
+                                           headers={**WS_HOST, "cookie": cookie, "origin": HOST}) as ws:
+            ws.receive_bytes()
+            response = self.client.post("/remote/size", json={"cols": 60, "rows": 30})
+            self.assertEqual(response.json(), {"active": True, "size": [60, 30], **self.LIMITS})
+            self.assertEqual(self.tmux.options["@bon5ai_stream_size"], "60x30")
+            self.tmux.window = (60, 29, "on")  # the stream wrapper applied it, and tmux followed
+            self.assertTrue(self.client.get("/remote/status").json()["resize"]["active"])
+        for _ in range(50):  # the stream closed: the session goes back to the host's size
+            if self.tmux.options.get("@bon5ai_stream_size") == "120x40":
+                break
+            time.sleep(0.02)
+        self.assertEqual(self.tmux.options["@bon5ai_stream_size"], "120x40")
+        self.assertFalse(self.client.get("/remote/status").json()["resize"]["active"])
+        events = [json.loads(line) for line in self.audit_path.read_text().splitlines()]
+        self.assertIn({"event": "viewer.resize", "cols": 60, "rows": 30, "host_cols": 120, "host_rows": 40},
+                      [{key: value for key, value in event.items() if key != "ts"} for event in events])
+
+    def test_no_resize_while_the_stream_is_down(self):
+        self.pair()
+        self.state.stream_owned = lambda pid, listen: False
+        self.assertNotIn("resize", self.client.get("/remote/status").json())
 
 
 class ProxySecretTests(ListenerCase):

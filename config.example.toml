@@ -12,6 +12,12 @@ session = "share"
 code_ttl_seconds = 600            # a code works once, for this long (60-3600; `code --ttl` overrides it)
 viewer_ttl_seconds = 43200        # a paired browser stays signed in at most this long
 
+# Let a viewer's page size the session to its screen, at a text size it picks with its
+# - and + buttons. Only while you are detached and that browser is the one viewer
+# watching; the session goes back to your size when either stops being true. Programs in
+# the session see the resize. Off, viewers scale your terminal's grid to fit instead.
+viewer_resize = false
+
 # Agents. A grant never outlives agent_ttl_seconds, its tmux session, or a gate restart.
 agent_ttl_seconds = 43200
 access_token_ttl_seconds = 3600

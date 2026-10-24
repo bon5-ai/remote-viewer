@@ -1,8 +1,14 @@
 """Against a real tmux server on a private socket. Skipped when tmux isn't installed."""
 
+import fcntl
+import os
+import pty
 import shutil
+import signal
+import struct
 import subprocess
 import tempfile
+import termios
 import time
 import unittest
 from pathlib import Path
@@ -45,11 +51,49 @@ class RealTmuxTests(unittest.TestCase):
                         "bash", "--norc", "--noprofile"], check=True)
         self.tmux = Tmux(self.socket, "share")
         self.pane = self.tmux.active_pane()
+        self.clients: list[tuple[subprocess.Popen, int]] = []
         self.assertTrue(wait_for(lambda: "$" in "".join(self.tmux.capture(self.pane)[0])))
 
     def tearDown(self):
         subprocess.run(["tmux", "-S", str(self.socket), "kill-server"], capture_output=True)
+        for process, master in self.clients:
+            process.kill()
+            process.wait()
+            os.close(master)
         self.tmp.cleanup()
+
+    def attach(self, cols: int, rows: int, *flags: str) -> tuple[subprocess.Popen, int]:
+        """A tmux client on a pty of the given size, like the host's terminal or the stream's."""
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        env = {key: value for key, value in os.environ.items() if key != "TMUX"} | {"TERM": "xterm-256color"}
+        process = subprocess.Popen(["tmux", "-S", str(self.socket), "attach-session", "-t", "=share", *flags],
+                                   stdin=slave, stdout=slave, stderr=slave, env=env, start_new_session=True)
+        os.close(slave)
+        self.clients.append((process, master))
+        return process, master
+
+    @staticmethod
+    def resize(client: tuple[subprocess.Popen, int], cols: int, rows: int) -> None:
+        process, master = client
+        fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        process.send_signal(signal.SIGWINCH)  # the pty isn't its controlling terminal, so the kernel won't
+
+    def test_a_lone_ignore_size_client_sizes_the_window(self):
+        # Viewer sizing (sizing.py) rests on this: the stream's read-only, ignore-size client
+        # is ignored only while another client is attached. Alone, tmux sizes the window to it.
+        stream = self.attach(100, 21, "-f", "read-only,ignore-size")
+        self.assertTrue(wait_for(lambda: self.tmux.client_count() == 1))
+        self.resize(stream, 60, 25)
+        self.assertTrue(wait_for(lambda: self.tmux.window_size() == (60, 24, "on")), self.tmux.window_size())
+        self.assertFalse(self.tmux.host_attached())
+        self.attach(90, 30)  # the host
+        self.assertTrue(wait_for(lambda: self.tmux.window_size() == (90, 29, "on")), self.tmux.window_size())
+        self.assertEqual(self.tmux.client_count(), 2)
+        self.assertTrue(self.tmux.host_attached())
+        self.resize(stream, 50, 20)
+        time.sleep(0.3)
+        self.assertEqual(self.tmux.window_size(), (90, 29, "on"))  # the host's terminal decides now
 
     def screen(self) -> str:
         return "\n".join(self.tmux.capture(self.pane)[0])

@@ -138,13 +138,16 @@ class Gate:
         self._viewers: dict[str, tuple[str, float]] = {}
         self._failures: dict[str, deque[float]] = {}
         self._all_failures: deque[float] = deque()
-        self._streams: dict[str, int] = {}
+        self._streams: dict[str, list[str]] = {}  # session -> the viewer of each open stream
+        self._sizes: dict[str, tuple[int, int]] = {}  # viewer -> the terminal size its page asked for
         self._assets: dict[str, bytes] = {}
 
     def _prune(self, now: float) -> None:
         for table in (self._codes, self._viewers):
             for key in [key for key, (_, expires) in table.items() if expires <= now]:
                 del table[key]
+        for key in [key for key in self._sizes if key not in self._viewers]:
+            del self._sizes[key]
         cutoff = now - FAILURE_WINDOW_SECONDS
         for client in list(self._failures):
             window = self._failures[client]
@@ -218,16 +221,42 @@ class Gate:
     def revoke(self, token: str) -> None:
         with self._lock:
             self._viewers.pop(digest(token), None)
+            self._sizes.pop(digest(token), None)
 
     def revoke_all(self) -> int:
         with self._lock:
             count = len(self._viewers)
             self._viewers.clear()
+            self._sizes.clear()
         return count
 
     def viewer_count(self) -> int:
         with self._lock:
-            return sum(self._streams.values())
+            return sum(len(watching) for watching in self._streams.values())
+
+    def request_size(self, token: str, size: tuple[int, int]) -> bool:
+        """Remember the terminal size a viewer's page asked for. False if token is no viewer."""
+        key = digest(token)
+        with self._lock:
+            self._prune(self.clock())
+            if key not in self._viewers:
+                return False
+            self._sizes[key] = size
+        return True
+
+    def requested_size(self, token: str) -> tuple[int, int] | None:
+        with self._lock:
+            return self._sizes.get(digest(token))
+
+    def sole_viewer_size(self, session: str, token: str | None = None) -> tuple[int, int] | None:
+        """The size asked for by the one viewer watching the session: None while nobody or
+        more than one stream is watching, or that viewer asked for none, or isn't token."""
+        with self._lock:
+            self._prune(self.clock())
+            watching = self._streams.get(session, [])
+            if len(watching) != 1 or (token is not None and watching[0] != digest(token)):
+                return None
+            return self._sizes.get(watching[0])
 
     def status(self, token: str) -> dict | None:
         session = self.viewer_session(token)
@@ -243,24 +272,26 @@ class Gate:
         else:
             state = "live"
         with self._lock:
-            viewers = self._streams.get(session, 0)
+            viewers = len(self._streams.get(session, []))
         return {"state": state, "viewers": viewers}
 
-    def open_stream(self, session: str) -> bool:
+    def open_stream(self, session: str, token: str) -> bool:
         with self._lock:
-            count = self._streams.get(session, 0)
-            if count >= MAX_STREAMS:
+            watching = self._streams.setdefault(session, [])
+            if len(watching) >= MAX_STREAMS:
                 return False
-            self._streams[session] = count + 1
-        self.on_viewers(session, count + 1)
+            watching.append(digest(token))
+            count = len(watching)
+        self.on_viewers(session, count)
         return True
 
-    def close_stream(self, session: str) -> None:
+    def close_stream(self, session: str, token: str) -> None:
         with self._lock:
-            count = max(0, self._streams.get(session, 0) - 1)
-            if count:
-                self._streams[session] = count
-            else:
+            watching = self._streams.get(session, [])
+            if digest(token) in watching:
+                watching.remove(digest(token))
+            count = len(watching)
+            if not count:
                 self._streams.pop(session, None)
         self.on_viewers(session, count)
 

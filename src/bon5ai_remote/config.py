@@ -38,7 +38,7 @@ HOST_VALUE = re.compile(r"[a-z0-9.\-]+(?::\d{1,5})?|\[[0-9a-f:]+\](?::\d{1,5})?"
 
 TOP_KEYS = {"session", "tmux_socket", "code_ttl_seconds", "viewer_ttl_seconds", "agent_ttl_seconds",
             "access_token_ttl_seconds", "kill_key", "allowed_redirect_uris", "client_metadata_documents",
-            "audit_log", "allow_private_listen", "proxy_secret_file", "listener"}
+            "audit_log", "allow_private_listen", "proxy_secret_file", "viewer_resize", "listener"}
 LISTENER_KEYS = {"address", "public_url", "viewer", "mcp", "allowed_hosts", "proxy_header",
                  "client_ip_header", "deny_funnel"}
 
@@ -153,6 +153,7 @@ class Config:
     kill_key: str = "X"
     allowed_redirect_uris: tuple[str, ...] = ()
     client_metadata_documents: bool = True
+    viewer_resize: bool = False
     proxy_secret: str = field(default="", repr=False)
     static_dir: Path = Path(__file__).resolve().parent / "static"
 
@@ -342,5 +343,6 @@ def load(path: Path | str | None = None, env=os.environ) -> Config:
         allowed_redirect_uris=tuple(_redirect_uri(uri) for uri in
                                     _strings(data.get("allowed_redirect_uris", []), "allowed_redirect_uris")),
         client_metadata_documents=_flag(data, "client_metadata_documents", True),
+        viewer_resize=_flag(data, "viewer_resize", False),
         proxy_secret=secret,
     )

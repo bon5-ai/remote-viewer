@@ -145,6 +145,11 @@ class Tmux:
         out = self.out("list-clients", "-t", f"={self.session}", "-F", "#{client_readonly}")
         return bool(out) and "0" in out.split()
 
+    def client_count(self) -> int:
+        """Clients attached to the session, the stream's hidden one included."""
+        out = self.out("display-message", "-p", "-t", self.target, "#{session_attached}")
+        return int(out) if out and out.isdigit() else 0
+
     def last_human_input(self) -> float | None:
         """When a writable client last sent a key, in epoch seconds."""
         out = self.out("list-clients", "-t", f"={self.session}", "-F", "#{client_readonly} #{client_activity}")

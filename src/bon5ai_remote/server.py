@@ -82,6 +82,7 @@ class Listeners:
     async def housekeeping(self) -> None:
         while not self.stopping.is_set():
             await anyio.to_thread.run_sync(self.state.refresh_badges)
+            await anyio.to_thread.run_sync(self.state.sizer.reconcile)
             with anyio.move_on_after(HOUSEKEEPING_SECONDS):
                 await self.stopping.wait()
 

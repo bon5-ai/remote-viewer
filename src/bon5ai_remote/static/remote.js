@@ -72,6 +72,7 @@ function loadPlayer() {
 async function startPlayer() {
   await loadPlayer();
   if (player) return;
+  chWidth ??= measureCh();
   const url = new URL('ws', base);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
   const created = AsciinemaPlayer.create({ driver: 'websocket', url: url.href }, $('player'), {
@@ -91,12 +92,17 @@ async function startPlayer() {
   for (const name of ['ended', 'offline', 'errored']) created.addEventListener(name, stopped);
   // Paint the margin around the terminal in the terminal's own background, so the
   // letterboxing left by fitting a fixed grid to the viewport doesn't show as a box.
+  // The stream is open by now, so ask again whether this page's size applies: the status
+  // that started the player came before the gate counted this viewer in.
   created.addEventListener('metadata', () => {
     const el = created.el?.querySelector('.ap-player');
     const background = el && getComputedStyle(el).getPropertyValue('--term-color-background').trim();
     if (background) $('view').style.setProperty('--rm-term-bg', background);
+    if (resize && !resize.active) refresh();
   });
   player = created;
+  syncSizeButtons();
+  scheduleSize();
 }
 
 function stopPlayer() {
@@ -114,6 +120,8 @@ async function refresh() {
     return schedule();
   }
   const { status, body } = result;
+  resize = body.resize ?? null;  // only while there is a stream to watch, and viewer_resize is on
+  syncSizeButtons();
   if (status === 401) {
     stopPlayer();
     return show('pair');
@@ -129,6 +137,7 @@ async function refresh() {
   } else {
     notice(null);
     if (!player) await startPlayer().catch(() => notice('player-failed'));
+    else scheduleSize();  // asks again only if the gate holds another size for this page
   }
   schedule();
 }
@@ -197,6 +206,115 @@ $('pair-form').addEventListener('submit', async event => {
 });
 
 $('again').addEventListener('click', () => show('pair'));
+
+// ---- terminal size --------------------------------------------------------------
+// With viewer_resize on, the status carries `resize`: whether the session has this page's
+// size now (the gate allows it only while the host is away and this is the one viewer
+// watching), the size the gate holds for the page, and the limits. The page asks for the
+// grid that fills the player at the text size picked with − and +, and asks again
+// whenever that grid changes. The player draws each cell 1ch wide and LINE_HEIGHT em tall
+// inside a BORDER_EM border, then scales its font until the grid fits, so the grid that
+// fills the player at px pixels is the box less two borders, divided by the cell.
+const LINE_HEIGHT = 1.3333333333;  // the player's default terminalLineHeight
+const BORDER_EM = 0.75;            // div.ap-term's border, on each side
+const FONT_SIZES = [8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 28, 32];
+const DEFAULT_FONT_SIZE = 14;
+const FONT_KEY = 'rm-font-size';
+const SIZE_DELAY_MS = 250;
+const SIZE_HINT = "Text size follows the host's terminal while they're attached or someone else is watching.";
+
+let resize = null;
+let chWidth = null;  // the terminal face's 1ch, in em; measured once its fonts have loaded
+let fontSize = savedFontSize();
+let sizeTimer = null;
+
+function savedFontSize() {
+  let value = null;
+  try { value = Number(localStorage.getItem(FONT_KEY)); } catch {}
+  return FONT_SIZES.includes(value) ? value : DEFAULT_FONT_SIZE;
+}
+
+function measureCh() {
+  const probe = document.createElement('div');
+  Object.assign(probe.style, { position: 'absolute', visibility: 'hidden', width: '100ch', fontSize: '100px',
+                               fontFamily: TERM_FONT });
+  document.body.append(probe);
+  const width = probe.getBoundingClientRect().width / 100 / 100;
+  probe.remove();
+  return width;
+}
+
+function fillAt(px) {
+  const box = $('player');
+  const border = 2 * BORDER_EM * px;
+  return [Math.floor((box.clientWidth - border) / (chWidth * px)),
+          Math.floor((box.clientHeight - border) / (LINE_HEIGHT * px))];
+}
+
+function gridAt(px) {
+  return fillAt(px).map((value, axis) => Math.min(Math.max(value, resize.min[axis]), resize.max[axis]));
+}
+
+// The next text size in that direction that changes the grid. None once the grid would
+// pass a limit: held at the limit on one axis, it would leave the other half empty.
+function stepTo(step) {
+  const now = String(gridAt(fontSize));
+  for (let i = FONT_SIZES.indexOf(fontSize) + step; i >= 0 && i < FONT_SIZES.length; i += step) {
+    const fill = fillAt(FONT_SIZES[i]);
+    const limit = step > 0 ? resize.min : resize.max;
+    if (fill.some((value, axis) => (step > 0 ? value < limit[axis] : value > limit[axis]))) return null;
+    if (String(gridAt(FONT_SIZES[i])) !== now) return FONT_SIZES[i];
+  }
+  return null;
+}
+
+function syncSizeButtons() {
+  const usable = Boolean(resize?.active) && chWidth !== null;
+  for (const [id, step] of [['smaller', -1], ['larger', 1]]) {
+    const button = $(id);
+    button.hidden = resize === null;
+    button.setAttribute('aria-disabled', String(!usable || stepTo(step) === null));
+    button.title = usable ? button.getAttribute('aria-label') : SIZE_HINT;
+  }
+}
+
+function scheduleSize() {
+  clearTimeout(sizeTimer);
+  sizeTimer = setTimeout(sendSize, SIZE_DELAY_MS);
+}
+
+async function sendSize() {
+  if (!resize || !player || chWidth === null || !$('player').clientWidth) return;
+  const [cols, rows] = gridAt(fontSize);
+  if (resize.size?.[0] === cols && resize.size?.[1] === rows) return;  // the gate holds it already
+  const { status, body } = await api('size', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cols, rows }),
+  }).catch(() => ({ status: 0, body: {} }));
+  if (status === 200 && resize) {
+    resize = body;
+    syncSizeButtons();
+  }
+}
+
+function stepFont(step) {
+  const next = resize?.active && chWidth !== null ? stepTo(step) : null;
+  if (next === null) return;
+  fontSize = next;
+  try { localStorage.setItem(FONT_KEY, String(next)); } catch {}
+  syncSizeButtons();
+  scheduleSize();
+}
+
+$('smaller').addEventListener('click', () => stepFont(-1));
+$('larger').addEventListener('click', () => stepFont(1));
+// A rotated phone, a resized window or full screen: a new grid fills the player.
+new ResizeObserver(() => {
+  if (!resize) return;
+  syncSizeButtons();
+  scheduleSize();
+}).observe($('player'));
 
 // ---- full screen ----------------------------------------------------------------
 // The whole page goes full screen, not the player, so this button stays on top.
