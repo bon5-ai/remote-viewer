@@ -111,6 +111,12 @@ function stopPlayer() {
   $('player').replaceChildren();
 }
 
+// A paired viewer's status names the machine and the tmux session, so a tab is easy to
+// tell apart from others watching other hosts. Unpaired or ended, it says neither.
+function setTitle(body) {
+  document.title = body.host && body.session ? `${body.host}: ${body.session}` : 'Remote Viewer';
+}
+
 async function refresh() {
   let result;
   try {
@@ -120,6 +126,7 @@ async function refresh() {
     return schedule();
   }
   const { status, body } = result;
+  setTitle(body);
   resize = body.resize ?? null;  // only while there is a stream to watch, and viewer_resize is on
   syncSizeButtons();
   if (status === 401) {

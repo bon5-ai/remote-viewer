@@ -2,6 +2,7 @@
 
 import json
 import secrets
+import socket
 import tempfile
 import time
 import unittest
@@ -165,7 +166,9 @@ class ViewerTests(ListenerCase):
     def test_status_needs_a_viewer(self):
         self.assertEqual(self.client.get("/remote/status").status_code, 401)
         self.pair()
-        self.assertEqual(self.client.get("/remote/status").json(), {"state": "live", "viewers": 0})
+        self.assertEqual(self.client.get("/remote/status").json(),
+                         {"state": "live", "viewers": 0, "host": socket.gethostname(),
+                          "session": self.state.cfg.session})
 
     def test_viewers_cannot_size_the_session_unless_it_is_turned_on(self):
         self.pair()

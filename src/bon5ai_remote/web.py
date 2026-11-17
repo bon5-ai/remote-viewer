@@ -20,6 +20,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import socket
 from urllib.parse import parse_qs, urlsplit
 
 import anyio
@@ -195,6 +196,7 @@ def allowed_origins(scope) -> set[str]:
 # ---- the app ----------------------------------------------------------------------------------
 def build_app(state: State, listener: Listener):
     static_dir = state.cfg.static_dir
+    hostname = socket.gethostname()  # with the session name, the viewer page's title
 
     def static(request: Request) -> Response:
         name, content_type, csp = STATIC[request.scope["path"]]
@@ -216,6 +218,8 @@ def build_app(state: State, listener: Listener):
         if result is None:
             return respond_json({"state": "unpaired"}, 401)
         headers = [cookie(COOKIE, "", 0)] if result["state"] == "ended" else []
+        if result["state"] != "ended":
+            result.update(host=hostname, session=state.cfg.session)
         if state.cfg.viewer_resize and result["state"] in ("live", "host-away"):
             result["resize"] = state.sizer.describe(token)
         return respond_json(result, headers=headers)

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The viewer page's title is the host and tmux session it shows (`host: session`), so
+  tabs watching different machines can be told apart. It was always "Remote Viewer".
 - `viewer_resize = true` lets a viewer's page size the session to its own screen while
   the host is detached and that browser is the only viewer watching. − and + buttons
   next to the full-screen button set the text size, and the page asks for the grid that

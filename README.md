@@ -4,6 +4,8 @@ Share a tmux session as a live, **read-only** view in any browser: scan a QR cod
 phone and watch your terminal. Let AI agents (Claude Code, or any MCP client) read that same
 session and, if you allow it, type into it.
 
+[![Demo: a coding agent running in a shared tmux session, watched from a car's browser](docs/demo-poster.jpg)](https://x.com/mikeg0/status/2115439092012089698)
+
 Nobody gets in without the person at the terminal:
 
 - **Browsers** pair with a one-time code you mint in your shell. The QR code carries it.
@@ -224,7 +226,8 @@ annotated [config.example.toml](config.example.toml), and copy it to
   stream always match), and relays the WebSocket. The cookie and Origin are checked
   first, and only the handshake headers go upstream.
 - **Status.** The page polls `status` and shows the stream live, the host away (detached;
-  still live), the stream down, or the session ended.
+  still live), the stream down, or the session ended. It also names the host and tmux
+  session, which the page puts in its title (`host: session`).
 - **Fonts.** The terminal is drawn in Cascadia Mono, served by the gate (SIL OFL 1.1), so
   box drawing and braille look right on every device.
 
